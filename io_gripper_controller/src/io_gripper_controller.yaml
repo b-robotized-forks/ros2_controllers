@@ -192,7 +192,7 @@ io_gripper_controller:
           validation: {
             unique<>: null,
           }
-      }
+        }
   configuration_joints: {
     type: string_array,
     default_value: [],

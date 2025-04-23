@@ -142,11 +142,11 @@ controller_interface::CallbackReturn IOGripperController::on_deactivate(
 controller_interface::return_type IOGripperController::update(
   const rclcpp::Time & time, const rclcpp::Duration & /*period*/)
 {
-  if (reconfigureFlag_.load())
-  {
-    configuration_key_ = *(configure_gripper_buffer_.readFromRT());
-    handle_reconfigure_state_transition(*(reconfigure_state_buffer_.readFromRT()));
-  }
+  // if (reconfigureFlag_.load())
+  // {
+  //   configuration_key_ = *(configure_gripper_buffer_.readFromRT());
+  //   handle_reconfigure_state_transition(*(reconfigure_state_buffer_.readFromRT()));
+  // }
 
   switch (*(gripper_service_buffer_.readFromRT()))
   {
@@ -517,8 +517,8 @@ void IOGripperController::handle_reconfigure_state_transition(const reconfigure_
             check_state_ios_ = true;
           }
         }
-      }
-
+      }          
+      
       if (check_state_ios_)
       {
         for (size_t i = 0; i < conf_it_.joint_states.size(); ++i)

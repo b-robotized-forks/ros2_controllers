@@ -76,6 +76,9 @@ enum class reconfigure_state_type : std::uint8_t
   CHECK_STATE = 2,
 };
 
+constexpr double HIGH_VALUE = 1.0;
+constexpr double LOW_VALUE = 0.0;
+
 class IOGripperController : public controller_interface::ControllerInterface
 /**
  * @brief IOGripperController class handles the control of an IO-based gripper.
@@ -170,7 +173,6 @@ public:
   std::vector<double> set_before_command_open_values;
   std::vector<double> set_after_command_open_values;
   std::vector<double> reconfigure_command_values;
-  std::vector<std::string> state_ios_open;
   std::vector<std::string> state_ios_close;
   std::vector<std::string> set_before_command_close;
   std::vector<std::string> set_after_command_close;
@@ -315,6 +317,11 @@ private:
    * @brief Publishes the reconfigure gripper joint states.
    */
   void publish_reconfigure_gripper_joint_states();
+
+  /**
+   * @brief Check if all interfaces are equal to a reference value
+   */
+  bool states_equal_ref_value(const std::vector<std::string> &  state_names, const double ref_value, const double eps = std::numeric_limits<double>::epsilon());
 
   /**
    * @brief Checks the gripper and reconfigure state.

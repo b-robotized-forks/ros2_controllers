@@ -676,11 +676,6 @@ void IOGripperController::prepare_command_and_state_ios()
     }
   }
 
-  // parse_interfaces_from_params(
-  //   params_.close.set_after_command_high, 1.0, close_ios_.set_after_command_ios, command_if_ios);
-  // parse_interfaces_from_params(
-  //   params_.close.set_after_command_low, 0.0, close_ios_.set_after_command_ios, command_if_ios);
-
   for (const auto & key : params_.close.set_before_command.high)
   {
     if (!key.empty())
@@ -1186,97 +1181,86 @@ void IOGripperController::config_execute(std::shared_ptr<GoalHandleGripperConfig
   }
 }
 
-void IOGripperController::check_gripper_and_reconfigure_state()
+bool IOGripperController::states_equal_ref_value(const std::vector<std::string> &  state_names, const double ref_value, const double eps)
 {
-  bool gripper_state_found = false;
-
-  for (size_t i = 0; i < state_ios_open.size(); ++i)
+  bool gripper_state_valid = false;
+  for (const auto & state : state_names)
   {
-    setResult = find_and_get_state(state_ios_open[i], state_value_);
-    if (!setResult)
+    double state_value = std::numeric_limits<double>::quiet_NaN();
+    bool get_state = find_and_get_state(state, state_value);
+    if (!get_state)
     {
       RCLCPP_ERROR(
-        get_node()->get_logger(), "Failed to get the state for %s", state_ios_open[i].c_str());
+        get_node()->get_logger(), "Failed to get the state for %s", state.c_str());
     }
     else
     {
-      if (abs(state_value_ - state_ios_open_values[i]) < std::numeric_limits<double>::epsilon())
+      if (abs(state_value - ref_value) < eps)
       {
-        gripper_state_found = true;
+        gripper_state_valid = true;
       }
       else
       {
-        gripper_state_found = false;
+        // if one of the state is not valid then return false. For the gripper to be in a valid state all the states given in low or high have to be fullfiled
+        return gripper_state_valid = false;
+      }
+    }
+  }
+  return gripper_state_valid;
+}
+
+void IOGripperController::check_gripper_and_reconfigure_state()
+{
+  // check if gripper is in one of the closed configurations 
+  bool is_in_valid_closed_configuration = false;
+  for (const auto & [state_name, state_params] : params_.close.state.possible_closed_states_map)
+  {
+
+    bool close_high_states_valid = states_equal_ref_value(state_params.high, HIGH_VALUE);
+    bool close_low_states_valid = states_equal_ref_value(state_params.low, LOW_VALUE);
+
+    is_in_valid_closed_configuration = close_high_states_valid && close_low_states_valid;
+
+    // if gripper is in a valid closed configuration, set joint value of this configuration
+    if (is_in_valid_closed_configuration)
+    {
+      for (size_t i = 0;
+            i < params_.close.state.possible_closed_states_map.at(state_name).joint_states.size();
+            ++i)
+      {
+        joint_state_values_[i] =
+          params_.close.state.possible_closed_states_map.at(state_name).joint_states[i];      
+      }
+      break;
+    }
+  }
+  
+  bool is_in_valid_open_state = false;
+  // if gripper is not closed check if gripper is in valid open configurations
+  if(!is_in_valid_closed_configuration)
+  {
+    bool open_high_states_valid = states_equal_ref_value(params_.open.state.high, HIGH_VALUE);
+    bool open_low_states_valid = states_equal_ref_value(params_.open.state.low, LOW_VALUE);
+
+    is_in_valid_open_state = open_high_states_valid && open_low_states_valid;
+
+    // if gripper is in a valid open configuration, set joint value of this configuration
+    if (is_in_valid_open_state)
+    {
+      for (size_t i = 0; i < params_.open.joint_states.size(); ++i)
+      {
+        joint_state_values_[i] = params_.open.joint_states[i];
       }
     }
   }
 
-  if (gripper_state_found)
+  // if neither in valid closed nor open state print warning and set joint_values to nan
+  if(!is_in_valid_closed_configuration && !is_in_valid_open_state)
   {
-    for (size_t i = 0; i < params_.open.joint_states.size(); ++i)
-    {
-      joint_state_values_[i] = params_.open.joint_states[i];
-    }
+    RCLCPP_WARN(get_node()->get_logger(), "Gripper is in undefined initial state!");
+    joint_state_values_.assign(joint_state_values_.size(), std::numeric_limits<double>::quiet_NaN());
   }
-  else
-  {
-    for (const auto & [state_name, state_params] : params_.close.state.possible_closed_states_map)
-    {
-      for (const auto & high_val : state_params.high)
-      {
-        setResult = find_and_get_state(high_val, state_value_);
-        if (!setResult)
-        {
-          RCLCPP_ERROR(
-            get_node()->get_logger(), "Failed to get the state for %s", high_val.c_str());
-        }
-        else
-        {
-          if (abs(state_value_ - 1.0) < std::numeric_limits<double>::epsilon())
-          {
-            gripper_state_found = true;
-          }
-          else
-          {
-            gripper_state_found = false;
-            break;
-          }
-        }
-      }
-      for (const auto & low_val : state_params.low)
-      {
-        setResult = find_and_get_state(low_val, state_value_);
-        if (!setResult)
-        {
-          RCLCPP_ERROR(get_node()->get_logger(), "Failed to get the state for %s", low_val.c_str());
-        }
-        else
-        {
-          if (abs(state_value_ - 0.0) < std::numeric_limits<double>::epsilon())
-          {
-            gripper_state_found = true;
-          }
-          else
-          {
-            gripper_state_found = false;
-            break;
-          }
-        }
-      }
-
-      if (gripper_state_found)
-      {
-        for (size_t i = 0;
-             i < params_.close.state.possible_closed_states_map.at(state_name).joint_states.size();
-             ++i)
-        {
-          joint_state_values_[i] =
-            params_.close.state.possible_closed_states_map.at(state_name).joint_states[i];
-        }
-        break;
-      }
-    }
-  }
+  
 
   bool reconfigure_state_found = false;
   for (const auto & [key, val] : params_.configuration_setup.configurations_map)
@@ -1335,6 +1319,7 @@ void IOGripperController::check_gripper_and_reconfigure_state()
     }
   }
 }
+
 }  // namespace io_gripper_controller
 
 #include "pluginlib/class_list_macros.hpp"

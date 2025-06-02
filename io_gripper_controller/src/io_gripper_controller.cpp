@@ -962,6 +962,8 @@ controller_interface::CallbackReturn IOGripperController::prepare_publishers_and
 
     gripper_joint_state_publisher_->msg_.name.resize(final_joint_size);
     gripper_joint_state_publisher_->msg_.position.resize(final_joint_size);
+    gripper_joint_state_publisher_->msg_.velocity.resize(final_joint_size);
+    gripper_joint_state_publisher_->msg_.effort.resize(final_joint_size);
 
     joint_state_values_.resize(final_joint_size, std::numeric_limits<double>::quiet_NaN());
 
@@ -969,6 +971,8 @@ controller_interface::CallbackReturn IOGripperController::prepare_publishers_and
     {
       gripper_joint_state_publisher_->msg_.name[i] = params_.open_close_joints[i];
       gripper_joint_state_publisher_->msg_.position[i] = joint_state_values_[i];
+      gripper_joint_state_publisher_->msg_.velocity[i] = 0.0;
+      gripper_joint_state_publisher_->msg_.effort[i] = 0.0;
     }
     for (size_t i = 0; i < params_.configuration_joints.size(); ++i)
     {
@@ -976,6 +980,8 @@ controller_interface::CallbackReturn IOGripperController::prepare_publishers_and
         params_.configuration_joints[i];
       gripper_joint_state_publisher_->msg_.position[i + params_.open_close_joints.size()] =
         joint_state_values_[i + params_.open_close_joints.size()];
+      gripper_joint_state_publisher_->msg_.velocity[i + params_.open_close_joints.size()] = 0.0;
+      gripper_joint_state_publisher_->msg_.effort[i + params_.open_close_joints.size()] = 0.0;
     }
   }
   catch (const std::exception & e)
@@ -1014,6 +1020,8 @@ void IOGripperController::publish_gripper_joint_states()
     for (size_t i = 0; i < joint_state_values_.size(); ++i)
     {
       gripper_joint_state_publisher_->msg_.position[i] = joint_state_values_[i];
+      gripper_joint_state_publisher_->msg_.velocity[i] = 0.0;
+      gripper_joint_state_publisher_->msg_.effort[i] = 0.0;
     }
   }
   gripper_joint_state_publisher_->unlockAndPublish();

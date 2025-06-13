@@ -22,7 +22,7 @@
 
 #include "control_msgs/msg/dynamic_interface_group_values.hpp"
 #include "controller_interface/controller_interface.hpp"
-#include "gpio_command_controller_parameters.hpp"
+#include "gpio_controllers/gpio_command_controller_parameters.hpp"
 #include "gpio_controllers/visibility_control.h"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"

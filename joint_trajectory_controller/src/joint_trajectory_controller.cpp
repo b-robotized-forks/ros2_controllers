@@ -340,14 +340,14 @@ controller_interface::return_type JointTrajectoryController::update(
       if (active_goal)
       {
         // send feedback
-        auto feedback = std::make_shared<FollowJTrajAction::Feedback>();
-        feedback->header.stamp = time;
-        feedback->joint_names = params_.joints;
+        // auto feedback = std::make_shared<FollowJTrajAction::Feedback>();
+        // feedback->header.stamp = time;
+        // feedback->joint_names = params_.joints;
 
-        feedback->actual = state_current_;
-        feedback->desired = state_desired_;
-        feedback->error = state_error_;
-        active_goal->setFeedback(feedback);
+        // feedback->actual = state_current_;
+        // feedback->desired = state_desired_;
+        // feedback->error = state_error_;
+        // active_goal->setFeedback(feedback);
 
         // check abort
         if (tolerance_violated_while_moving)

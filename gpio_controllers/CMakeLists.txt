@@ -12,6 +12,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   hardware_interface
   pluginlib
   rclcpp
+  rclcpp_action
   rclcpp_lifecycle
   realtime_tools
   std_srvs
@@ -39,6 +40,7 @@ target_link_libraries(gpio_controllers PUBLIC
                       hardware_interface::hardware_interface
                       pluginlib::pluginlib
                       rclcpp::rclcpp
+                      rclcpp_action::rclcpp_action
                       rclcpp_lifecycle::rclcpp_lifecycle
                       realtime_tools::realtime_tools
                       ${control_msgs_TARGETS}
@@ -59,6 +61,7 @@ target_link_libraries(gpio_tool_controllers PUBLIC
   hardware_interface::hardware_interface
   pluginlib::pluginlib
   rclcpp::rclcpp
+  rclcpp_action::rclcpp_action
   rclcpp_lifecycle::rclcpp_lifecycle
   realtime_tools::realtime_tools
   ${control_msgs_TARGETS}

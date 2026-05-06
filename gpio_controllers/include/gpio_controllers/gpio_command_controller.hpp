@@ -15,13 +15,17 @@
 #ifndef GPIO_CONTROLLERS__GPIO_COMMAND_CONTROLLER_HPP_
 #define GPIO_CONTROLLERS__GPIO_COMMAND_CONTROLLER_HPP_
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
+#include "control_msgs/action/gpio_command.hpp"
 #include "control_msgs/msg/dynamic_interface_group_values.hpp"
 #include "controller_interface/controller_interface.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
 #include "rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp"
 #include "rclcpp_lifecycle/state.hpp"
 #include "realtime_tools/realtime_publisher.hpp"
@@ -41,6 +45,25 @@ using MapOfReferencesToStateInterfaces =
   std::unordered_map<std::string, std::reference_wrapper<hardware_interface::LoanedStateInterface>>;
 using StateInterfaces =
   std::vector<std::reference_wrapper<hardware_interface::LoanedStateInterface>>;
+
+using GPIOCommandAction = control_msgs::action::GPIOCommand;
+using GoalHandleGPIOCommand = rclcpp_action::ServerGoalHandle<GPIOCommandAction>;
+
+/**
+ * @brief Struct representing an active action goal. 
+ * with this, the action callback thread and the update loop can share the status of the action
+ */
+struct ActiveGoalData
+{
+  std::string command_interface;   // command interface we target
+  double command_value{0.0};       // value we write
+  std::string state_interface;     // state interface we monitor
+  double state_value{0.0};         // value we're looking for for success
+  double tolerance{0.0};           // tolerance
+  double timeout{0.0};             // timeout (default 30s)
+  bool command_sent{false};        // if we already sent the goal
+  double goal_start_time{0.0};     // goal start time
+};
 
 class GpioCommandController : public controller_interface::ControllerInterface
 {
@@ -85,6 +108,13 @@ private:
   bool update_dynamic_map_parameters();
   std::vector<hardware_interface::ComponentInfo> get_gpios_from_urdf() const;
 
+  rclcpp_action::GoalResponse handle_goal(
+    const rclcpp_action::GoalUUID & uuid,
+    std::shared_ptr<const GPIOCommandAction::Goal> goal);
+  rclcpp_action::CancelResponse handle_cancel(
+    std::shared_ptr<GoalHandleGPIOCommand> goal_handle);
+  void handle_accepted(std::shared_ptr<GoalHandleGPIOCommand> goal_handle);
+
 protected:
   InterfacesNames command_interface_types_;
   InterfacesNames state_interface_types_;
@@ -104,6 +134,19 @@ protected:
 
   std::shared_ptr<gpio_command_controller_parameters::ParamListener> param_listener_{};
   gpio_command_controller_parameters::Params params_;
+
+  // Action server members
+  rclcpp_action::Server<GPIOCommandAction>::SharedPtr action_server_;
+  std::mutex goal_handle_mutex_;
+  std::shared_ptr<GoalHandleGPIOCommand> active_goal_handle_;
+  realtime_tools::RealtimeThreadSafeBox<ActiveGoalData> active_goal_data_;
+  std::atomic<bool> goal_active_{false};
+  std::atomic<bool> preempt_requested_{false};
+
+  // value of the monitored state interface for this goal
+  std::atomic<double> current_goal_monitored_state_value_{std::numeric_limits<double>::quiet_NaN()};
+  // if we have a topic command arriving for the currently active goal command interface, we don't process that topic goal.
+  realtime_tools::RealtimeThreadSafeBox<std::string> locked_command_interface_;  
 };
 
 }  // namespace gpio_controllers

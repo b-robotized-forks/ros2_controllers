@@ -654,6 +654,12 @@ void GpioCommandController::handle_accepted(std::shared_ptr<GoalHandleGPIOComman
     timeout = params_.action_timeout;
   }
 
+  double tolerance = goal->tolerance;
+  if (tolerance <= 0.0)
+  {
+    tolerance = params_.action_tolerance;
+  }
+
   auto feedback = std::make_shared<GPIOCommandAction::Feedback>();
   auto result = std::make_shared<GPIOCommandAction::Result>();
 
@@ -684,7 +690,7 @@ void GpioCommandController::handle_accepted(std::shared_ptr<GoalHandleGPIOComman
       goal_handle->publish_feedback(feedback);
 
       // are we at desired state?
-      if (std::abs(current_val - goal->state_value) <= goal->tolerance)
+      if (std::abs(current_val - goal->state_value) <= tolerance)
       {
         result->success = true;
         result->message = "State interface '" + goal->state_interface +

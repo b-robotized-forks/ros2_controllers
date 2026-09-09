@@ -178,9 +178,19 @@ protected:
   rclcpp_action::Server<ConfigActionType>::SharedPtr config_action_server_;
   rclcpp::Service<ResetSrvType>::SharedPtr reset_service_;
 
-  // Store current action tool is executing
-  std::atomic<ToolAction> current_tool_action_{ToolAction::IDLE};
-  std::atomic<uint8_t> current_tool_transition_{GPIOToolTransition::IDLE};
+  // (action, transition) packed into a single atomic word so a goal/service-request thread and
+  // the RT update() thread can never tear the pair, and so a write can be a compare_exchange
+  // against a value one of them just read - see gpio_tool_controller.cpp for the pack/unpack
+  // helpers and the read-then-CAS pattern used at every write site.
+  std::atomic<uint16_t> tool_state_{0};  // 0 == (ToolAction::IDLE, GPIOToolTransition::IDLE)
+
+  ToolAction tool_action() const;
+  uint8_t tool_transition() const;
+  // Unconditional combined write - only safe where nothing else can be racing (on_init(), and
+  // test setup code). Everywhere update() or a request handler changes state, it must go through
+  // a compare_exchange against a freshly-read value instead.
+  void set_tool_state(ToolAction action, uint8_t transition);
+
   std::atomic<bool> reset_halted_{false};
   std::atomic<bool> transition_time_updated_{false};
   realtime_tools::RealtimeThreadSafeBox<std::string> target_configuration_;

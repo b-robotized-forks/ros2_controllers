@@ -12,17 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef gpio_tool_controller__gpio_tool_controller_HPP_
-#define gpio_tool_controller__gpio_tool_controller_HPP_
+#ifndef GPIO_CONTROLLERS__GPIO_TOOL_CONTROLLER_HPP_
+#define GPIO_CONTROLLERS__GPIO_TOOL_CONTROLLER_HPP_
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <set>
 #include <string>
-#include <vector>
-
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
+
 #include "control_msgs/action/gpio_tool_command.hpp"
 #include "control_msgs/action/set_gpio_tool_config.hpp"
 #include "control_msgs/msg/dynamic_interface_values.hpp"
@@ -178,17 +180,12 @@ protected:
   rclcpp_action::Server<ConfigActionType>::SharedPtr config_action_server_;
   rclcpp::Service<ResetSrvType>::SharedPtr reset_service_;
 
-  // (action, transition) packed into a single atomic word so a goal/service-request thread and
-  // the RT update() thread can never tear the pair, and so a write can be a compare_exchange
-  // against a value one of them just read - see gpio_tool_controller.cpp for the pack/unpack
-  // helpers and the read-then-CAS pattern used at every write site.
+  // action and transition packed into one atomic word. Updated via compare_exchange.
   std::atomic<uint16_t> tool_state_{0};  // 0 == (ToolAction::IDLE, GPIOToolTransition::IDLE)
 
   ToolAction tool_action() const;
   uint8_t tool_transition() const;
-  // Unconditional combined write - only safe where nothing else can be racing (on_init(), and
-  // test setup code). Everywhere update() or a request handler changes state, it must go through
-  // a compare_exchange against a freshly-read value instead.
+  // Unconditional write. Only safe in on_init() and test setup.
   void set_tool_state(ToolAction action, uint8_t transition);
 
   std::atomic<bool> reset_halted_{false};
@@ -198,19 +195,42 @@ protected:
   using ToolJointStatePublisher = realtime_tools::RealtimePublisher<sensor_msgs::msg::JointState>;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr t_js_publisher_;
   std::unique_ptr<ToolJointStatePublisher> tool_joint_state_publisher_;
+  sensor_msgs::msg::JointState joint_state_msg_;
   std::vector<double> joint_states_values_;
   using InterfacePublisher = realtime_tools::RealtimePublisher<DynInterfaceMsg>;
   rclcpp::Publisher<DynInterfaceMsg>::SharedPtr if_publisher_;
   std::unique_ptr<InterfacePublisher> interface_publisher_;
+  DynInterfaceMsg interface_msg_;
   using ControllerStatePublisher = realtime_tools::RealtimePublisher<ControllerStateMsg>;
   rclcpp::Publisher<ControllerStateMsg>::SharedPtr t_s_publisher_;
   std::unique_ptr<ControllerStatePublisher> controller_state_publisher_;
+  ControllerStateMsg controller_state_msg_;
 
-  EngagingSrvType::Response process_engaging_request(
+  /**
+   * @brief Processes Engaging/Disengaging action request for tool.
+   *
+   * @param requested_action Enum of action being requested.
+   * @param requested_action_name Name of the requested action.
+   * \return EngagingSrvType::Response
+   */
+  EngagingSrvType::Response process_tool_action_request(
     const ToolAction & requested_action, const std::string & requested_action_name);
 
+  /**
+   * @brief Processes Reconfigure request
+   *
+   * @param config_name Name of the requested config.
+   * \return EngagingSrvType::Response
+   */
   EngagingSrvType::Response process_reconfigure_request(const std::string & config_name);
 
+  /**
+   * @brief Synchronously blocks the calling thread until the active tool action or reconfiguration
+   * process completes or encounters a fault
+   *
+   * @param requested_action_name Name of the action being monitored.
+   * \return EngagingSrvType::Response
+   */
   EngagingSrvType::Response service_wait_for_transition_end(
     const std::string & requested_action_name);
 
@@ -220,14 +240,14 @@ private:
 
   /**
    * @brief Handles the state transition when enaging the tool.
-   * @param current_time [in] Current time for checking the transition time.
-   * @param ios [in] ToolTransitionIOs structure containing the IOs configurations for the
+   * @param current_time Current time for checking the transition time.
+   * @param ios ToolTransitionIOs structure containing the IOs configurations for the
    * transition.
-   * @param target_state [in] State name to target when checking reached states.
-   * @param joint_states [in/out] Joint states vector to write the joint states to.
-   * @param joint_states_start_index [in] Start index in the joint_states vector to write the joint
+   * @param target_state State name to target when checking reached states.
+   * @param joint_states Joint states vector to write the joint states to.
+   * @param joint_states_start_index Start index in the joint_states vector to write the joint
    * states to.
-   * @param end_state [out] Currently determined state during transition. If empty, tool is
+   * @param end_state Currently determined state during transition. If empty, tool is
    * currently in transition and no known state has been reached.
    */
   void handle_tool_state_transition(
@@ -238,20 +258,20 @@ private:
   /**
    * @brief
    *
-   * @param current_time [in] Current time for checking the transition time.
-   * @param ios [in] ToolTransitionIOs structure containing the IOs configurations for the
+   * @param current_time Current time for checking the transition time.
+   * @param ios ToolTransitionIOs structure containing the IOs configurations for the
    * transition.
    * @param joint_states [in/out] Joint states vector to write the joint states to.
-   * @param joint_states_start_index [in] Start index in the joint_states vector to write the joint
+   * @param joint_states_start_index Start index in the joint_states vector to write the joint
    * states to.
-   * @param output_prefix [in] Prefix to add to the output messages.
-   * @param next_transition [in] Next transition to set if the current transition is completed.
+   * @param output_prefix Prefix to add to the output messages.
+   * @param next_transition Next transition to set if the current transition is completed.
    * @param target_and_found_state_name [in/out] State name to target when checking reached states,
    * and feedback on the found state. If the argument is not empty, the next transition will be
    * triggered only when that state is reached. If any state is acceptable, empty string shall be
    * passed. In that case the next transition will be triggered if any state if reached. In either
    * case the output is the found state name.
-   * @param warning_output [in] If true, warning messages will be printed.
+   * @param warning_output If true, warning messages will be printed.
    */
   void check_tool_state_and_switch(
     const rclcpp::Time & current_time, const ToolTransitionIOs & ios,
@@ -273,17 +293,43 @@ private:
 
   /**
    * @brief Publishes the the values from the RT loop.
+   *
+   * @param current_time The current ROS timestamp applied to published messages.
    */
   void publish_topics(const rclcpp::Time & current_time);
 
   /**
    * @brief Checks the tools state.
+   *
+   * @param current_time The current ROS timestamp.
+   * @param warning_output If true, warning messages will be printed.
    */
   void check_tool_state(const rclcpp::Time & current_time, const bool warning_output = false);
 
+  /**
+   * @brief Iterates through a map of commands, applies them to the command interfaces,
+   * and updates the controller's lifecycle or state transition.
+   *
+   * @param commands A map of commands.
+   * @param output_prefix String prefix for logging messages to identify the context.
+   * @param next_transition The next state transition ID to store if all commands succeed.
+   * \returns true If all commands were successfully applied else false
+   */
   bool set_commands(
     const std::unordered_map<std::string, std::pair<double, size_t>> & commands,
     const std::string & output_prefix, const uint8_t next_transition);
+  /**
+   * @brief Verifies the current states match the expected values within a defined tolerance.
+   * @param current_time The current ROS timestamp used to evaluate the state transition
+   * timeout.
+   * @param states A map of states.
+   * @param output_prefix String prefix for logging messages to identify the context.
+   * @param next_transition The next state transition ID to store if all states match the
+   * targets.
+   * @param warning_out Flag to conditionally enable or disable standard ROS warning when
+   * states doesn't match
+   * \return true if all current states are within tolerance else false.
+   */
   bool check_states(
     const rclcpp::Time & current_time,
     const std::unordered_map<std::string, std::pair<double, size_t>> & states,
@@ -292,9 +338,7 @@ private:
 
   std::vector<std::string> configurations_list_;
   std::vector<gpio_tool_controller::Params::ConfigurationSetup::MapConfigurations> config_map_;
-  double state_value_;
   std::string configuration_key_;
-  bool check_state_ios_;
   std::string closed_state_name_;
   std::vector<std::string>::iterator config_index_;
   rclcpp::CallbackGroup::SharedPtr disengaging_service_callback_group_;
@@ -337,14 +381,20 @@ private:
     std::shared_ptr<rclcpp_action::ServerGoalHandle<ConfigActionType>> goal_handle);
 
   /**
-   * @brief Handles the accepted goal for the tool state and configuration changes.
+   * @brief Handles the accepted goal for the tool state changes.
    * @param goal_handle The handle of the accepted goal.
    */
-  template <typename ActionT>
-  void handle_action_accepted(
-    std::shared_ptr<rclcpp_action::ServerGoalHandle<ActionT>> goal_handle);
+  void handle_state_action_accepted(
+    std::shared_ptr<rclcpp_action::ServerGoalHandle<EngagingActionType>> goal_handle);
+
+  /**
+   * @brief Handles the accepted goal for the configuration changes.
+   * @param goal_handle The handle of the accepted goal.
+   */
+  void handle_config_action_accepted(
+    std::shared_ptr<rclcpp_action::ServerGoalHandle<ConfigActionType>> goal_handle);
 };
 
 }  // namespace gpio_tool_controller
 
-#endif  // gpio_tool_controller__gpio_tool_controller_HPP_
+#endif  // GPIO_CONTROLLERS__GPIO_TOOL_CONTROLLER_HPP_

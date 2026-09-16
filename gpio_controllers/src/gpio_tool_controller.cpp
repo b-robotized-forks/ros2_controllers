@@ -362,7 +362,7 @@ controller_interface::CallbackReturn GpioToolController::on_activate(
 controller_interface::CallbackReturn GpioToolController::on_deactivate(
   const rclcpp_lifecycle::State & /*previous_state*/)
 {
-  joint_states_values_.resize(
+  joint_states_values_.assign(
     params_.engaged_joints.size() + params_.configuration_joints.size(),
     std::numeric_limits<double>::quiet_NaN());
   return controller_interface::CallbackReturn::SUCCESS;
@@ -422,9 +422,7 @@ controller_interface::return_type GpioToolController::update(
         "going to HALTED. Reset the tool using '~/reset_halted' service. After that set sensible "
         "state.",
         current_state_.get().c_str());
-      // A goal thread is allowed to override CANCELING with a new action (see
-      // process_engaging_request()); only force HALTED if that hasn't happened since we entered
-      // this case.
+      // Force HALTED only if a new action has not already overridden CANCELING.
       uint16_t seen = tool_state_.load();
       if (unpack_action(seen) == ToolAction::CANCELING)
       {
@@ -514,7 +512,7 @@ bool GpioToolController::check_states(
       const double current_state_value =
         state_interfaces_.at(index).get_optional<double>().value_or(
           std::numeric_limits<double>::quiet_NaN());
-      if (std::isnan(current_state_value) || abs(current_state_value - value) > params_.tolerance)
+      if (std::isnan(current_state_value) || fabs(current_state_value - value) > params_.tolerance)
       {
         RCLCPP_WARN_EXPRESSION(
           get_node()->get_logger(), warning_output,
@@ -579,7 +577,9 @@ void GpioToolController::check_tool_state_and_switch(
       const auto & js_val = ios.states_joint_states.at(state_name);
       if (joint_states_start_index + js_val.size() <= joint_states.size())
       {
-        std::copy(js_val.begin(), js_val.end(), joint_states.begin() + joint_states_start_index);
+        std::copy(
+          js_val.begin(), js_val.end(),
+          joint_states.begin() + static_cast<std::ptrdiff_t>(joint_states_start_index));
       }
       else
       {
@@ -665,9 +665,10 @@ void GpioToolController::handle_tool_state_transition(
       break;
 
     case GPIOToolTransition::CHECK_AFTER_COMMAND:
-      if (check_states(
-            current_time, ios.set_after_states.at(current_state),
-            target_state + " - CHECK_AFTER_COMMAND", GPIOToolTransition::IDLE))
+      if (
+        check_states(
+          current_time, ios.set_after_states.at(current_state),
+          target_state + " - CHECK_AFTER_COMMAND", GPIOToolTransition::IDLE))
       {
         finish_transition_to_state = true;
       }
@@ -719,7 +720,9 @@ bool GpioToolController::prepare_command_and_state_ios()
       if (!interfaces[i].empty())
       {
         ios[interfaces[i]].first = values[i];
-        ios[interfaces[i]].second = -1;  // -1 means not set yet
+        ios[interfaces[i]].second =
+          std::numeric_limits<size_t>::max();  // index will be set later when interfaces are
+                                               // matched with the ones from hardware info
         interface_list.insert(interfaces[i]);
       }
     }
@@ -884,7 +887,7 @@ bool GpioToolController::prepare_command_and_state_ios()
       auto it = std::find(interfaces.begin(), interfaces.end(), itf_name);
       if (it != interfaces.end())
       {
-        index = std::distance(interfaces.begin(), it);
+        index = static_cast<size_t>(std::distance(interfaces.begin(), it));
       }
       else
       {
@@ -955,7 +958,7 @@ void GpioToolController::set_tool_state(ToolAction action, uint8_t transition)
   tool_state_.store(pack_action_transition(action, transition));
 }
 
-GpioToolController::EngagingSrvType::Response GpioToolController::process_engaging_request(
+GpioToolController::EngagingSrvType::Response GpioToolController::process_tool_action_request(
   const ToolAction & requested_action, const std::string & requested_action_name)
 {
   EngagingSrvType::Response response;
@@ -969,9 +972,7 @@ GpioToolController::EngagingSrvType::Response GpioToolController::process_engagi
     return response;
   }
 
-  // Retried if update() (or another request) changes (action, transition) concurrently between
-  // us reading it and trying to start the new one - rare, but see gpio_tool_controller_bug_report
-  // for what happens without this: a torn read/write here could wedge the tool permanently.
+  // Retries the compare_exchange if update() or another request changes state concurrently.
   while (true)
   {
     uint16_t seen = tool_state_.load();
@@ -1030,8 +1031,7 @@ GpioToolController::EngagingSrvType::Response GpioToolController::process_engagi
       response.message = "Tool action '" + requested_action_name + "' started.";
       return response;
     }
-    // `seen` is now stale - update() (or another request) changed things concurrently; loop back
-    // and re-evaluate the preconditions above against the fresh value.
+    // `seen` is stale. Loop back and re-evaluate the preconditions against the fresh value.
   }
 }
 
@@ -1064,8 +1064,7 @@ GpioToolController::EngagingSrvType::Response GpioToolController::process_reconf
     return response;
   }
 
-  // Retried if update() changes (action, transition) concurrently - see
-  // process_engaging_request() above for why a plain load-then-store isn't enough here.
+  // Retries the compare_exchange if update() changes state concurrently.
   while (true)
   {
     uint16_t seen = tool_state_.load();
@@ -1078,8 +1077,7 @@ GpioToolController::EngagingSrvType::Response GpioToolController::process_reconf
       RCLCPP_ERROR(get_node()->get_logger(), "%s", response.message.c_str());
       return response;
     }
-    // This is OK to access `current_state_` as we are in the IDLE state and it is not being
-    // modified.
+    // `current_state_` is not modified while in the IDLE state.
     if (!params_.enable_config_engaged && current_state_.get() != params_.disengaged.name)
     {
       response.success = false;
@@ -1146,7 +1144,7 @@ controller_interface::CallbackReturn GpioToolController::prepare_publishers_and_
         const std::shared_ptr<EngagingSrvType::Request> /*request*/,
         std::shared_ptr<EngagingSrvType::Response> response)
     {
-      auto result = process_engaging_request(ToolAction::DISENGAGING, params_.disengaged.name);
+      auto result = process_tool_action_request(ToolAction::DISENGAGING, params_.disengaged.name);
       if (result.success)
       {
         result = service_wait_for_transition_end(params_.disengaged.name);
@@ -1163,7 +1161,7 @@ controller_interface::CallbackReturn GpioToolController::prepare_publishers_and_
                                       const std::shared_ptr<EngagingSrvType::Request> /*request*/,
                                       std::shared_ptr<EngagingSrvType::Response> response)
     {
-      auto result = process_engaging_request(ToolAction::ENGAGING, params_.engaged.name);
+      auto result = process_tool_action_request(ToolAction::ENGAGING, params_.engaged.name);
       if (result.success)
       {
         result = service_wait_for_transition_end(params_.engaged.name);
@@ -1207,9 +1205,7 @@ controller_interface::CallbackReturn GpioToolController::prepare_publishers_and_
         &GpioToolController::handle_engaging_goal, this, std::placeholders::_1,
         std::placeholders::_2),
       std::bind(&GpioToolController::handle_engaging_cancel, this, std::placeholders::_1),
-      std::bind(
-        &GpioToolController::handle_action_accepted<EngagingActionType>, this,
-        std::placeholders::_1));
+      std::bind(&GpioToolController::handle_state_action_accepted, this, std::placeholders::_1));
 
     if (configuration_control_enabled_)
     {
@@ -1220,9 +1216,7 @@ controller_interface::CallbackReturn GpioToolController::prepare_publishers_and_
           &GpioToolController::handle_config_goal, this, std::placeholders::_1,
           std::placeholders::_2),
         std::bind(&GpioToolController::handle_config_cancel, this, std::placeholders::_1),
-        std::bind(
-          &GpioToolController::handle_action_accepted<ConfigActionType>, this,
-          std::placeholders::_1));
+        std::bind(&GpioToolController::handle_config_action_accepted, this, std::placeholders::_1));
     }
   }
 
@@ -1265,10 +1259,7 @@ controller_interface::CallbackReturn GpioToolController::prepare_publishers_and_
 
   if (!params_.engaged.name.empty() || !params_.disengaged.name.empty())
   {
-    RCLCPP_INFO(
-      get_node()->get_logger(),
-      "No joints defined, so no joint states will be published, althrough the publisher is "
-      "initialized.");
+    RCLCPP_INFO(get_node()->get_logger(), "Engaged or Disengaged states are empty.");
   }
 
   // if (joint_states_values_.size() == 0)
@@ -1285,74 +1276,71 @@ controller_interface::CallbackReturn GpioToolController::prepare_publishers_and_
 
   if (joint_states_need_publishing_)
   {
-    tool_joint_state_publisher_->msg_.name.reserve(joint_states_values_.size());
-    tool_joint_state_publisher_->msg_.position = joint_states_values_;
+    joint_state_msg_.name.reserve(joint_states_values_.size());
+    joint_state_msg_.position = joint_states_values_;
 
     for (const auto & joint_name : params_.engaged_joints)
     {
-      tool_joint_state_publisher_->msg_.name.push_back(joint_name);
+      joint_state_msg_.name.push_back(joint_name);
     }
     for (const auto & joint_name : params_.configuration_joints)
     {
-      tool_joint_state_publisher_->msg_.name.push_back(joint_name);
+      joint_state_msg_.name.push_back(joint_name);
     }
   }
 
-  interface_publisher_->msg_.states.interface_names.reserve(state_if_ios_.size());
-  interface_publisher_->msg_.states.values.resize(state_if_ios_.size());
-  interface_publisher_->msg_.commands.interface_names.reserve(command_if_ios_.size());
-  interface_publisher_->msg_.commands.values.resize(command_if_ios_.size());
+  interface_msg_.states.interface_names.reserve(state_if_ios_.size());
+  interface_msg_.states.values.resize(state_if_ios_.size());
+  interface_msg_.commands.interface_names.reserve(command_if_ios_.size());
+  interface_msg_.commands.values.resize(command_if_ios_.size());
   for (const auto & state_io : state_if_ios_)
   {
-    interface_publisher_->msg_.states.interface_names.push_back(state_io);
+    interface_msg_.states.interface_names.push_back(state_io);
   }
   for (const auto & command_io : command_if_ios_)
   {
-    interface_publisher_->msg_.commands.interface_names.push_back(command_io);
+    interface_msg_.commands.interface_names.push_back(command_io);
   }
 
-  controller_state_publisher_->msg_.state = current_state_.get();
-  controller_state_publisher_->msg_.configuration = current_configuration_.get();
-  controller_state_publisher_->msg_.current_transition.state = tool_transition();
+  controller_state_msg_.state = current_state_.get();
+  controller_state_msg_.configuration = current_configuration_.get();
+  controller_state_msg_.current_transition.state = tool_transition();
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
 void GpioToolController::publish_topics(const rclcpp::Time & time)
 {
-  if (joint_states_need_publishing_)
+  if (joint_states_need_publishing_ && tool_joint_state_publisher_)
   {
-    if (tool_joint_state_publisher_ && tool_joint_state_publisher_->trylock())
-    {
-      tool_joint_state_publisher_->msg_.header.stamp = time;
-      tool_joint_state_publisher_->msg_.position = joint_states_values_;
-    }
-    tool_joint_state_publisher_->unlockAndPublish();
+    joint_state_msg_.header.stamp = time;
+    joint_state_msg_.position = joint_states_values_;
+    tool_joint_state_publisher_->try_publish(joint_state_msg_);
   }
 
-  if (interface_publisher_ && interface_publisher_->trylock())
+  if (interface_publisher_)
   {
-    interface_publisher_->msg_.header.stamp = time;
+    interface_msg_.header.stamp = time;
     for (size_t i = 0; i < state_interfaces_.size(); ++i)
     {
-      interface_publisher_->msg_.states.values.at(i) =
+      interface_msg_.states.values.at(i) =
         static_cast<float>(state_interfaces_.at(i).get_optional<double>().value_or(
           std::numeric_limits<double>::quiet_NaN()));
     }
     for (size_t i = 0; i < command_interfaces_.size(); ++i)
     {
-      interface_publisher_->msg_.commands.values.at(i) =
+      interface_msg_.commands.values.at(i) =
         static_cast<float>(command_interfaces_.at(i).get_optional<double>().value_or(
           std::numeric_limits<double>::quiet_NaN()));
     }
-    interface_publisher_->unlockAndPublish();
+    interface_publisher_->try_publish(interface_msg_);
   }
-  if (controller_state_publisher_ && controller_state_publisher_->trylock())
+  if (controller_state_publisher_)
   {
-    controller_state_publisher_->msg_.state = current_state_.get();
-    controller_state_publisher_->msg_.configuration = current_configuration_.get();
-    controller_state_publisher_->msg_.current_transition.state = tool_transition();
-    controller_state_publisher_->unlockAndPublish();
+    controller_state_msg_.state = current_state_.get();
+    controller_state_msg_.configuration = current_configuration_.get();
+    controller_state_msg_.current_transition.state = tool_transition();
+    controller_state_publisher_->try_publish(controller_state_msg_);
   }
 }
 
@@ -1367,7 +1355,7 @@ rclcpp_action::GoalResponse GpioToolController::handle_engaging_goal(
     action_name = params_.engaged.name;
   }
 
-  auto result = process_engaging_request(engaging_action, action_name);
+  auto result = process_tool_action_request(engaging_action, action_name);
 
   if (!result.success)
   {
@@ -1387,8 +1375,7 @@ rclcpp_action::CancelResponse GpioToolController::handle_engaging_cancel(
     get_node()->get_logger(),
     "Tool action is being canceled, going to HALTED state. If you want to reset the Tool, use "
     "'~/reset_halted' service.");
-  // Force action to CANCELING while preserving whatever transition update() currently has,
-  // regardless of concurrent writes.
+  // Force action to CANCELING, keep the current transition.
   uint16_t seen = tool_state_.load();
   while (!tool_state_.compare_exchange_strong(
     seen, pack_action_transition(ToolAction::CANCELING, unpack_transition(seen))))
@@ -1419,8 +1406,7 @@ rclcpp_action::CancelResponse GpioToolController::handle_config_cancel(
     get_node()->get_logger(),
     "Tool action is being canceled, going to HALTED state. If you want to reset the Tool, use "
     "'~/reset_halted' service.");
-  // Force action to CANCELING while preserving whatever transition update() currently has,
-  // regardless of concurrent writes.
+  // Force action to CANCELING, keep the current transition.
   uint16_t seen = tool_state_.load();
   while (!tool_state_.compare_exchange_strong(
     seen, pack_action_transition(ToolAction::CANCELING, unpack_transition(seen))))
@@ -1429,12 +1415,11 @@ rclcpp_action::CancelResponse GpioToolController::handle_config_cancel(
   return rclcpp_action::CancelResponse::ACCEPT;
 }
 
-template <typename ActionT>
-void GpioToolController::handle_action_accepted(
-  std::shared_ptr<rclcpp_action::ServerGoalHandle<ActionT>> goal_handle)
+void GpioToolController::handle_state_action_accepted(
+  std::shared_ptr<rclcpp_action::ServerGoalHandle<EngagingActionType>> goal_handle)
 {
-  auto result = std::make_shared<typename ActionT::Result>();
-  auto feedback = std::make_shared<typename ActionT::Feedback>();
+  auto result = std::make_shared<EngagingActionType::Result>();
+  auto feedback = std::make_shared<EngagingActionType::Feedback>();
 
   while (true)
   {
@@ -1451,6 +1436,43 @@ void GpioToolController::handle_action_accepted(
     {
       result->success = false;
       result->resulting_state_name = current_state_.get();
+      result->message =
+        "Tool action canceled or halted! Check the error, reset the tool using '~/reset_halted' "
+        "service and set to sensible state.";
+      goal_handle->abort(result);
+      break;
+    }
+    else
+    {
+      feedback->transition.state = unpack_transition(state);
+      goal_handle->publish_feedback(feedback);
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+}
+
+void GpioToolController::handle_config_action_accepted(
+  std::shared_ptr<rclcpp_action::ServerGoalHandle<ConfigActionType>> goal_handle)
+{
+  auto result = std::make_shared<ConfigActionType::Result>();
+  auto feedback = std::make_shared<ConfigActionType::Feedback>();
+
+  while (true)
+  {
+    const uint16_t state = tool_state_.load();
+    if (unpack_action(state) == ToolAction::IDLE)
+    {
+      result->success = true;
+      result->resulting_state_name = current_configuration_.get();
+      result->message = "Tool action successfully executed!";
+      goal_handle->succeed(result);
+      break;
+    }
+    else if (unpack_transition(state) == GPIOToolTransition::HALTED)
+    {
+      result->success = false;
+      result->resulting_state_name = current_configuration_.get();
       result->message =
         "Tool action canceled or halted! Check the error, reset the tool using '~/reset_halted' "
         "service and set to sensible state.";

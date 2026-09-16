@@ -35,12 +35,15 @@
 #include <rclcpp/utilities.hpp>
 #include <rclcpp_lifecycle/node_interfaces/lifecycle_node_interface.hpp>
 #include "control_msgs/msg/gpio_tool_transition.hpp"
+#include "controller_interface/controller_interface_params.hpp"
 #include "gpio_controllers/gpio_tool_controller.hpp"
+#include "lifecycle_msgs/msg/state.hpp"
 
 namespace
 {
 constexpr auto NODE_SUCCESS = controller_interface::CallbackReturn::SUCCESS;
 constexpr auto NODE_ERROR = controller_interface::CallbackReturn::ERROR;
+constexpr auto NODE_FAILURE = controller_interface::CallbackReturn::FAILURE;
 using GPIOToolTransition = control_msgs::msg::GPIOToolTransition;
 using gpio_tool_controller::ToolAction;
 }  // namespace
@@ -50,9 +53,6 @@ class TestableGpioToolController : public gpio_tool_controller::GpioToolControll
 {
   FRIEND_TEST(GpioToolControllerTest, AllParamsSetSuccess);
   FRIEND_TEST(GpioToolControllerTest, AllParamNotSetFailure);
-  FRIEND_TEST(GpioToolControllerTest, GoalRejectedWhileInactive);
-  FRIEND_TEST(GpioToolControllerTest, UncontestedAdvanceSucceeds);
-  FRIEND_TEST(GpioToolControllerTest, ConcurrentChangeIsNotClobbered);
 
 public:
   controller_interface::CallbackReturn on_configure(
@@ -91,12 +91,14 @@ public:
 
   std::string get_current_state() const { return current_state_.get(); }
 
+  std::string get_current_configuration() const { return current_configuration_.get(); }
+
   // --- Service / action request helpers (expose protected methods for testing) ---
 
-  EngagingSrvType::Response call_process_engaging_request(
+  EngagingSrvType::Response call_process_tool_action_request(
     const ToolAction & action, const std::string & name)
   {
-    return process_engaging_request(action, name);
+    return process_tool_action_request(action, name);
   }
 
   EngagingSrvType::Response call_process_reconfigure_request(const std::string & config_name)
@@ -104,9 +106,38 @@ public:
     return process_reconfigure_request(config_name);
   }
 
-  // --- State forcing helper for CANCELING tests ---
+  // --- State forcing helpers for CANCELING / HALTED tests ---
 
   void force_canceling() { set_tool_state(ToolAction::CANCELING, tool_transition()); }
+
+  void force_halted() { set_tool_state(tool_action(), GPIOToolTransition::HALTED); }
+
+  void trigger_reset_halted() { reset_halted_.store(true); }
+
+  // --- Raw packed (action, transition) access, for testing compare-and-swap ---
+
+  uint16_t get_packed_state() const { return tool_state_.load(); }
+
+  void set_state(ToolAction action, uint8_t transition) { set_tool_state(action, transition); }
+
+  // Moves the pair from `expected` to (new_action, new_transition) via compare_exchange.
+  bool try_advance(uint16_t & expected, ToolAction new_action, uint8_t new_transition)
+  {
+    const uint16_t desired =
+      static_cast<uint16_t>((static_cast<uint16_t>(new_action) << 8) | new_transition);
+    return tool_state_.compare_exchange_strong(expected, desired);
+  }
+
+  // --- Inspection helpers ---
+
+  const std::vector<double> & get_joint_states_values() const { return joint_states_values_; }
+
+  bool has_action_server() const { return engaging_action_server_ != nullptr; }
+  bool has_config_action_server() const { return config_action_server_ != nullptr; }
+  bool has_disengaged_service() const { return disengaged_service_ != nullptr; }
+  bool has_engaged_service() const { return engaged_service_ != nullptr; }
+  bool has_reconfigure_service() const { return reconfigure_tool_service_ != nullptr; }
+  bool has_reset_service() const { return reset_service_ != nullptr; }
 };
 
 // We are using template class here for easier reuse of Fixture in specializations of controllers
@@ -135,9 +166,11 @@ public:
     auto node_options = controller_->define_custom_node_options();
     node_options.parameter_overrides(parameters);
 
-    ASSERT_EQ(
-      controller_->init(controller_name, "", 0, "", node_options),
-      controller_interface::return_type::OK);
+    controller_interface::ControllerInterfaceParams params;
+    params.controller_name = controller_name;
+    params.node_options = node_options;
+
+    ASSERT_EQ(controller_->init(params), controller_interface::return_type::OK);
     RCLCPP_INFO(rclcpp::get_logger("GpioToolControllerTest"), "initialized successfully");
   }
 
@@ -438,6 +471,19 @@ class GpioToolControllerRequestTest : public GpioToolControllerFixture<TestableG
 };
 
 class GpioToolControllerReconfigureTest
+: public GpioToolControllerFixture<TestableGpioToolController>
+{
+};
+
+class GpioToolControllerLifecycleTest : public GpioToolControllerFixture<TestableGpioToolController>
+{
+};
+
+class GpioToolControllerCancelingTest : public GpioToolControllerFixture<TestableGpioToolController>
+{
+};
+
+class GpioToolControllerServiceModeTest
 : public GpioToolControllerFixture<TestableGpioToolController>
 {
 };

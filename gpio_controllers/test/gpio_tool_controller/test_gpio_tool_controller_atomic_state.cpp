@@ -12,70 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Regression tests for the (action, transition) race: a goal thread starting a new action and
-// the RT update() thread re-affirming the idle scan could interleave so the RT thread's write
-// clobbers the goal thread's, wedging the tool permanently (see the client bug report this
-// fixes). The pair is now packed into one atomic and every write goes through a
-// compare_exchange against a value the writer just read, instead of a plain store.
-//
-// These tests exercise tool_state_'s compare_exchange directly - the same pattern used at every
-// write site in gpio_tool_controller.cpp. No threads or sleeps are needed: "a concurrent writer
-// got there first" is simulated by simply overwriting the packed state between reading the
-// snapshot and attempting the compare_exchange, which is deterministic and instant. No node
-// setup is needed either - tool_state_ default-constructs to (IDLE, IDLE) independently of
-// init()/on_configure().
+// Tests the compare_exchange discipline on the packed (action, transition) state, via
+// try_advance(). A concurrent writer is simulated by overwriting the packed state between
+// reading the snapshot and calling try_advance() - no threads needed.
 
 #include "test_gpio_tool_controller.hpp"
 
-namespace
-{
-using gpio_tool_controller::ToolAction;
-using GPIOToolTransition = control_msgs::msg::GPIOToolTransition;
-
-uint16_t pack(ToolAction action, uint8_t transition)
-{
-  return static_cast<uint16_t>((static_cast<uint16_t>(action) << 8) | transition);
-}
-}  // namespace
-
-// ---------------------------------------------------------------------------
-// Nothing else touched the state since the snapshot was read - the compare_exchange succeeds.
-// ---------------------------------------------------------------------------
+// No concurrent write between the read and the compare_exchange: it succeeds.
 TEST_F(GpioToolControllerTest, UncontestedAdvanceSucceeds)
 {
-  controller_->set_tool_state(ToolAction::IDLE, GPIOToolTransition::IDLE);
+  controller_->set_state(ToolAction::IDLE, GPIOToolTransition::IDLE);
+  uint16_t expected = controller_->get_packed_state();
 
-  uint16_t expected = controller_->tool_state_.load();
-  const bool advanced = controller_->tool_state_.compare_exchange_strong(
-    expected, pack(ToolAction::ENGAGING, GPIOToolTransition::SET_BEFORE_COMMAND));
+  const bool advanced =
+    controller_->try_advance(expected, ToolAction::ENGAGING, GPIOToolTransition::SET_BEFORE_COMMAND);
 
   EXPECT_TRUE(advanced);
-  EXPECT_EQ(controller_->tool_action(), ToolAction::ENGAGING);
-  EXPECT_EQ(controller_->tool_transition(), GPIOToolTransition::SET_BEFORE_COMMAND);
+  EXPECT_EQ(controller_->get_current_action(), ToolAction::ENGAGING);
+  EXPECT_EQ(controller_->get_current_transition(), GPIOToolTransition::SET_BEFORE_COMMAND);
 }
 
-// ---------------------------------------------------------------------------
-// Simulates the exact race from the bug report: an RT tick reads (IDLE, IDLE) intending to
-// re-affirm it (the idle-scan case), but a goal thread starts ENGAGING before the tick's
-// compare_exchange lands. The tick must back off instead of clobbering the goal thread's write.
-// ---------------------------------------------------------------------------
+// A concurrent write lands between the read and the compare_exchange: it fails and does not
+// clobber the concurrent write.
 TEST_F(GpioToolControllerTest, ConcurrentChangeIsNotClobbered)
 {
-  controller_->set_tool_state(ToolAction::IDLE, GPIOToolTransition::IDLE);
-  uint16_t stale_snapshot = controller_->tool_state_.load();  // what the RT tick "read"
+  controller_->set_state(ToolAction::IDLE, GPIOToolTransition::IDLE);
+  uint16_t stale_snapshot = controller_->get_packed_state();
 
-  // The goal thread gets there first.
-  controller_->set_tool_state(ToolAction::ENGAGING, GPIOToolTransition::SET_BEFORE_COMMAND);
+  controller_->set_state(ToolAction::ENGAGING, GPIOToolTransition::SET_BEFORE_COMMAND);
 
-  // The RT tick's compare_exchange, still holding the stale snapshot, must fail.
   uint16_t expected = stale_snapshot;
-  const bool advanced = controller_->tool_state_.compare_exchange_strong(
-    expected, pack(ToolAction::IDLE, GPIOToolTransition::IDLE));
+  const bool advanced =
+    controller_->try_advance(expected, ToolAction::IDLE, GPIOToolTransition::IDLE);
 
   EXPECT_FALSE(advanced);
-  // compare_exchange_strong updates `expected` to the actual current value on failure.
-  EXPECT_EQ(expected, controller_->tool_state_.load());
-  // The goal thread's write survives untouched.
-  EXPECT_EQ(controller_->tool_action(), ToolAction::ENGAGING);
-  EXPECT_EQ(controller_->tool_transition(), GPIOToolTransition::SET_BEFORE_COMMAND);
+  EXPECT_EQ(expected, controller_->get_packed_state());
+  EXPECT_EQ(controller_->get_current_action(), ToolAction::ENGAGING);
+  EXPECT_EQ(controller_->get_current_transition(), GPIOToolTransition::SET_BEFORE_COMMAND);
 }

@@ -1080,7 +1080,7 @@ GpioToolController::EngagingSrvType::Response GpioToolController::process_reconf
     }
     // This is OK to access `current_state_` as we are in the IDLE state and it is not being
     // modified.
-    if (current_state_.get() != params_.disengaged.name)
+    if (!params_.enable_config_engaged && current_state_.get() != params_.disengaged.name)
     {
       response.success = false;
       response.message = "Tool can be reconfigured only in '" + params_.disengaged.name +

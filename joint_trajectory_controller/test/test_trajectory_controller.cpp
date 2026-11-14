@@ -939,6 +939,44 @@ TEST_P(TrajectoryControllerTestParameterized, position_error_not_angle_wraparoun
 }
 
 /**
+ * @brief check that the controller follows a trajectory without a robot description
+ */
+TEST_P(TrajectoryControllerTestParameterized, follow_trajectory_without_robot_description)
+{
+  rclcpp::executors::MultiThreadedExecutor executor;
+  constexpr double k_p = 10.0;
+  SetUpAndActivateTrajectoryController(
+    executor, {}, true, k_p, 0.0, INITIAL_POS_JOINTS, INITIAL_VEL_JOINTS, INITIAL_ACC_JOINTS,
+    INITIAL_EFF_JOINTS, "");
+
+  // send msg
+  constexpr auto FIRST_POINT_TIME = std::chrono::milliseconds(300);
+  builtin_interfaces::msg::Duration time_from_start{rclcpp::Duration(FIRST_POINT_TIME)};
+  // *INDENT-OFF*
+  std::vector<std::vector<double>> points{{{3.3, 4.4, 6.6}}};
+  std::vector<std::vector<double>> effort{{{0.3, 0.4, 0.6}}};
+  std::vector<std::vector<double>> empty_effort;
+  // *INDENT-ON*
+  publish(
+    time_from_start, points, rclcpp::Time(), {}, {},
+    traj_controller_->has_effort_command_interface() ? effort : empty_effort);
+  traj_controller_->wait_for_trajectory(executor);
+
+  // the error computation must not read past the end of the angle wraparound flags
+  const rclcpp::Duration controller_period =
+    rclcpp::Duration::from_seconds(1.0 / traj_controller_->get_update_rate());
+  updateControllerAsync(
+    rclcpp::Duration(FIRST_POINT_TIME), rclcpp::Time(0, 0, RCL_STEADY_TIME), controller_period);
+
+  const auto state_reference = traj_controller_->get_state_reference();
+  EXPECT_NEAR(points[0][0], state_reference.positions[0], COMMON_THRESHOLD);
+  EXPECT_NEAR(points[0][1], state_reference.positions[1], COMMON_THRESHOLD);
+  EXPECT_NEAR(points[0][2], state_reference.positions[2], COMMON_THRESHOLD);
+
+  executor.cancel();
+}
+
+/**
  * @brief check if position error of continuous joints are wrapped around (state topic)
  */
 TEST_P(TrajectoryControllerTestParameterized, position_error_angle_wraparound)

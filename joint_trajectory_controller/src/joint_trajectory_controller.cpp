@@ -79,6 +79,8 @@ controller_interface::CallbackReturn JointTrajectoryController::on_init()
 
   const std::string & urdf = get_robot_description();
   std::vector<double> max_joint_vel(params_.joints.size(), 0.0);
+  // Without a URDF, no joint wraps around.
+  joints_angle_wraparound_.assign(params_.joints.size(), false);
   if (!urdf.empty())
   {
     urdf::Model model;
@@ -91,7 +93,6 @@ controller_interface::CallbackReturn JointTrajectoryController::on_init()
     {
       /// initialize the URDF model and update the joint angles wraparound vector
       // Configure joint position error normalization (angle_wraparound)
-      joints_angle_wraparound_.resize(params_.joints.size(), false);
       for (size_t i = 0; i < params_.joints.size(); ++i)
       {
         auto urdf_joint = model.getJoint(params_.joints[i]);

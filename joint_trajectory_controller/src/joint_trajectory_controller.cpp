@@ -93,9 +93,19 @@ controller_interface::CallbackReturn JointTrajectoryController::on_init()
       for (size_t i = 0; i < params_.joints.size(); ++i)
       {
         auto urdf_joint = model.getJoint(params_.joints[i]);
-        if (urdf_joint)
+        // Continuous joints are not required to declare <limit> in URDF; limits may be null.
+        if (urdf_joint && urdf_joint->limits)
         {
           max_joint_vel[i] = urdf_joint->limits->velocity;
+        }
+        else if (urdf_joint)
+        {
+          // Continuous joints may omit <limit>; velocity is only needed for
+          // decelerate_on_cancel (warned later if that feature cannot run).
+          RCLCPP_DEBUG(
+            get_node()->get_logger(),
+            "Joint '%s' has no <limit> in the URDF; velocity limit unavailable (using 0.0).",
+            params_.joints[i].c_str());
         }
         if (urdf_joint && urdf_joint->type == urdf::Joint::CONTINUOUS)
         {
@@ -389,7 +399,7 @@ controller_interface::return_type JointTrajectoryController::update(
               within_goal_time = false;
               // print once, goal will be aborted afterwards
               check_state_tolerance_per_joint(
-                state_error_, index, default_tolerances_.goal_state_tolerance[index],
+                state_error_, index, active_tol->goal_state_tolerance[index],
                 true /* show_errors */);
             }
           }
@@ -423,14 +433,9 @@ controller_interface::return_type JointTrajectoryController::update(
         }
         if (has_velocity_command_interface_)
         {
-          if (use_closed_loop_pid_adapter_)
-          {
-            assign_interface_from_point(joint_command_interface_[1], tmp_command_);
-          }
-          else
-          {
-            assign_interface_from_point(joint_command_interface_[1], command_next_.velocities);
-          }
+          assign_interface_from_point(
+            joint_command_interface_[1],
+            use_closed_loop_pid_adapter_ ? tmp_command_ : command_next_.velocities);
         }
         if (has_acceleration_command_interface_)
         {
@@ -438,15 +443,9 @@ controller_interface::return_type JointTrajectoryController::update(
         }
         if (has_effort_command_interface_)
         {
-          if (use_closed_loop_pid_adapter_)
-          {
-            assign_interface_from_point(joint_command_interface_[3], tmp_command_);
-          }
-          else
-          {
-            // If position and effort command interfaces, only pass desired effort
-            assign_interface_from_point(joint_command_interface_[3], state_desired_.effort);
-          }
+          assign_interface_from_point(
+            joint_command_interface_[3],
+            use_closed_loop_pid_adapter_ ? tmp_command_ : state_desired_.effort);
         }
 
         // store the previous command and time used in open-loop control mode
@@ -457,14 +456,14 @@ controller_interface::return_type JointTrajectoryController::update(
       if (active_goal)
       {
         // send feedback
-        // auto feedback = std::make_shared<FollowJTrajAction::Feedback>();
-        // feedback->header.stamp = time;
-        // feedback->joint_names = params_.joints;
-
-        // feedback->actual = state_current_;
-        // feedback->desired = state_desired_;
-        // feedback->error = state_error_;
-        // active_goal->setFeedback(feedback);
+        active_goal->trySetFeedback(
+          [&](FollowJTrajAction::Feedback & feedback)
+          {
+            feedback.header.stamp = time;
+            feedback.actual = state_current_;
+            feedback.desired = state_desired_;
+            feedback.error = state_error_;
+          });
 
         // check abort
         if (tolerance_violated_while_moving)
@@ -577,6 +576,38 @@ controller_interface::return_type JointTrajectoryController::update(
       // else, run another cycle while waiting for outside_goal_tolerance
       // to be satisfied (will stay in this state until new message arrives)
       // or outside_goal_tolerance violated within the goal_time_tolerance
+      // Check if action_execution_timeout is exceeded (from trajectory start)
+      if (
+        !before_last_point && !rt_is_holding_ && action_execution_timeout_ > 0.0 &&
+        (traj_time_ - current_trajectory_->time_from_start()).seconds() > action_execution_timeout_)
+      {
+        RCLCPP_ERROR(
+          logger, "Aborted due to action_execution_timeout [%f] exceeded [%f]",
+          action_execution_timeout_,
+          (traj_time_ - current_trajectory_->time_from_start()).seconds());
+        new_trajectory_msg_.reset();
+        if (should_decelerate_on_cancel_)
+        {
+          new_trajectory_msg_.initRT(decelerate_to_hold_position());
+        }
+        else
+        {
+          new_trajectory_msg_.initRT(set_hold_position());
+        }
+
+        if (active_goal)
+        {
+          auto result = std::make_shared<FollowJTrajAction::Result>();
+          result->set__error_code(FollowJTrajAction::Result::GOAL_TOLERANCE_VIOLATED);
+          result->set__error_string(
+            "Aborted due to action_execution_timeout [timeout: " +
+            std::to_string(action_execution_timeout_) + ", elapsed: " +
+            std::to_string((traj_time_ - current_trajectory_->time_from_start()).seconds()) + "]");
+          active_goal->setAborted(result);
+          rt_active_goal_.writeFromNonRT(RealtimeGoalHandlePtr());
+          rt_has_pending_goal_ = false;
+        }
+      }
     }
   }
 
@@ -1171,6 +1202,14 @@ controller_interface::CallbackReturn JointTrajectoryController::on_activate(
     }
   }
 
+  // Clear the ordered interfaces: they may hold references to loans already released, e.g.
+  // when on_deactivate returned early or a previous activation failed. Capacity is kept.
+  for (size_t index = 0; index < allowed_interface_types_.size(); ++index)
+  {
+    joint_command_interface_[index].clear();
+    joint_state_interface_[index].clear();
+  }
+
   // order all joints in the storage
   for (const auto & interface : params_.command_interfaces)
   {
@@ -1250,6 +1289,24 @@ controller_interface::CallbackReturn JointTrajectoryController::on_activate(
   else
   {
     cmd_timeout_ = 0.0;
+  }
+
+  if (params_.action_execution_timeout > 0.0)
+  {
+    action_execution_timeout_ = params_.action_execution_timeout;
+    if (params_.action_execution_timeout < default_tolerances_.goal_time_tolerance)
+    {
+      RCLCPP_WARN(
+        logger,
+        "action_execution_timeout (%f) must be greater than goal_time tolerance (%f), disabling",
+        params_.action_execution_timeout, default_tolerances_.goal_time_tolerance);
+      action_execution_timeout_ = 0.0;
+    }
+  }
+  else
+  {
+    action_execution_timeout_ = 0.0;
+    RCLCPP_INFO_ONCE(logger, "action_execution_timeout is disabled (set to 0.0)");
   }
 
   return CallbackReturn::SUCCESS;
@@ -1472,8 +1529,13 @@ void JointTrajectoryController::goal_accepted_callback(
   }
 
   // Update the active goal
-  RealtimeGoalHandlePtr rt_goal = std::make_shared<RealtimeGoalHandle>(goal_handle);
-  rt_goal->preallocated_feedback_->joint_names = params_.joints;
+  auto feedback = std::make_shared<FollowJTrajAction::Feedback>();
+  feedback->joint_names = params_.joints;
+  resize_joint_trajectory_point(feedback->actual, dof_);
+  resize_joint_trajectory_point(feedback->desired, dof_);
+  resize_joint_trajectory_point(feedback->error, dof_);
+  RealtimeGoalHandlePtr rt_goal =
+    std::make_shared<RealtimeGoalHandle>(goal_handle, nullptr, feedback);
   rt_goal->execute();
   rt_active_goal_.writeFromNonRT(rt_goal);
 
@@ -1605,47 +1667,33 @@ void JointTrajectoryController::sort_to_local_joint_order(
 {
   // rearrange all points in the trajectory message based on mapping
   std::vector<size_t> mapping_vector = mapping(trajectory_msg->joint_names, params_.joints);
-  auto remap = [this](
-                 const std::vector<double> & to_remap,
-                 const std::vector<size_t> & mapping) -> std::vector<double>
+  auto remap = [this, &mapping_vector](std::vector<double> & to_remap)
   {
     if (to_remap.empty())
     {
-      return to_remap;
+      return;
     }
-    if (to_remap.size() != mapping.size())
+    if (to_remap.size() != mapping_vector.size())
     {
       RCLCPP_WARN(
         get_node()->get_logger(), "Invalid input size (%zu) for sorting", to_remap.size());
-      return to_remap;
+      return;
     }
-    static std::vector<double> output(dof_, 0.0);
-    // Only resize if necessary since it's an expensive operation
-    if (output.size() != mapping.size())
+    // Don't make this static: it would be shared across all controller instances
+    std::vector<double> output(to_remap.size());
+    for (size_t index = 0; index < mapping_vector.size(); ++index)
     {
-      output.resize(mapping.size(), 0.0);
+      output[mapping_vector[index]] = to_remap[index];
     }
-    for (size_t index = 0; index < mapping.size(); ++index)
-    {
-      auto map_index = mapping[index];
-      output[map_index] = to_remap[index];
-    }
-    return output;
+    to_remap = std::move(output);
   };
 
-  for (size_t index = 0; index < trajectory_msg->points.size(); ++index)
+  for (auto & point : trajectory_msg->points)
   {
-    trajectory_msg->points[index].positions =
-      remap(trajectory_msg->points[index].positions, mapping_vector);
-
-    trajectory_msg->points[index].velocities =
-      remap(trajectory_msg->points[index].velocities, mapping_vector);
-
-    trajectory_msg->points[index].accelerations =
-      remap(trajectory_msg->points[index].accelerations, mapping_vector);
-
-    trajectory_msg->points[index].effort =
-      remap(trajectory_msg->points[index].effort, mapping_vector);
+    remap(point.positions);
+    remap(point.velocities);
+    remap(point.accelerations);
+    remap(point.effort);
   }
 }
 

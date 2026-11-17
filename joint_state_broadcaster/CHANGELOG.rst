@@ -2,6 +2,27 @@
 Changelog for package joint_state_broadcaster
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+4.43.1 (2026-11-04)
+-------------------
+* fix: Add missing includes (backport `#2706 <https://github.com/ros-controls/ros2_controllers/issues/2706>`_) (`#2710 <https://github.com/ros-controls/ros2_controllers/issues/2710>`_)
+  Co-authored-by: Christoph Fröhlich <christophfroehlich@users.noreply.github.com>
+* Add <numeric> for std::accumulate (backport `#2695 <https://github.com/ros-controls/ros2_controllers/issues/2695>`_) (`#2698 <https://github.com/ros-controls/ros2_controllers/issues/2698>`_)
+  Co-authored-by: Christoph Fröhlich <christophfroehlich@users.noreply.github.com>
+* Contributors: mergify[bot]
+
+4.43.0 (2026-10-05)
+-------------------
+* test: cleanup controller fixture member variables (backport `#2562 <https://github.com/ros-controls/ros2_controllers/issues/2562>`_) (`#2565 <https://github.com/ros-controls/ros2_controllers/issues/2565>`_)
+* Contributors: mergify[bot]
+
+4.42.1 (2026-08-12)
+-------------------
+
+4.42.0 (2026-08-10)
+-------------------
+* Use new Command/State Interfaces API for tests (backport `#2476 <https://github.com/ros-controls/ros2_controllers/issues/2476>`_) (`#2532 <https://github.com/ros-controls/ros2_controllers/issues/2532>`_)
+* Contributors: mergify[bot]
+
 4.41.0 (2026-07-01)
 -------------------
 * Test fix - call appropriate lifecycle transitions in controller tests: joint_state_broadcaster, joint_trajectory, omni_wheel_drive, bicycle_steering (backport `#2410 <https://github.com/ros-controls/ros2_controllers/issues/2410>`_) (`#2414 <https://github.com/ros-controls/ros2_controllers/issues/2414>`_)

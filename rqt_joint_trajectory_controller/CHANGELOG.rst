@@ -2,6 +2,22 @@
 Changelog for package rqt_joint_trajectory_controller
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+4.43.1 (2026-11-04)
+-------------------
+* rqt-jtc: reuse shared rqt node (backport `#2558 <https://github.com/ros-controls/ros2_controllers/issues/2558>`_) (`#2729 <https://github.com/ros-controls/ros2_controllers/issues/2729>`_)
+* Contributors: mergify[bot]
+
+4.43.0 (2026-10-05)
+-------------------
+
+4.42.1 (2026-08-12)
+-------------------
+* Fix another shutdown race with rqt_jtc (backport `#2467 <https://github.com/ros-controls/ros2_controllers/issues/2467>`_) (`#2551 <https://github.com/ros-controls/ros2_controllers/issues/2551>`_)
+* Contributors: mergify[bot]
+
+4.42.0 (2026-08-10)
+-------------------
+
 4.41.0 (2026-07-01)
 -------------------
 * rqt-jtc: Fix more shutdown races (backport `#2431 <https://github.com/ros-controls/ros2_controllers/issues/2431>`_) (`#2438 <https://github.com/ros-controls/ros2_controllers/issues/2438>`_)

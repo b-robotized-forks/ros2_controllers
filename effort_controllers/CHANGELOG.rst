@@ -2,6 +2,20 @@
 Changelog for package effort_controllers
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+4.43.1 (2026-11-04)
+-------------------
+
+4.43.0 (2026-10-05)
+-------------------
+* Add controller interface dependencies (backport `#2579 <https://github.com/ros-controls/ros2_controllers/issues/2579>`_) (`#2581 <https://github.com/ros-controls/ros2_controllers/issues/2581>`_)
+* Contributors: mergify[bot]
+
+4.42.1 (2026-08-12)
+-------------------
+
+4.42.0 (2026-08-10)
+-------------------
+
 4.41.0 (2026-07-01)
 -------------------
 

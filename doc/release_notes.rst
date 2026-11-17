@@ -9,6 +9,10 @@ admittance_controller
 * Remove ``robot_description`` parameter from parameter YAML, because it is not used at all (`#963 <https://github.com/ros-controls/ros2_controllers/pull/963>`_).
 * Added ``~/wrench_reference`` input topic which allows to provide a force-torque offset as WrenchStamped (`#1249 <https://github.com/ros-controls/ros2_controllers/pull/1249>`_).
 
+battery_state_broadcaster
+*************************
+* 🚀 The battery_state_broadcaster was added 🎉 (`#1888 <https://github.com/ros-controls/ros2_controllers/pull/1888>`_).
+
 state_interfaces_broadcaster
 *********************************
 * 🚀 The state_interfaces_broadcaster was added 🎉 (`#2006 <https://github.com/ros-controls/ros2_controllers/pull/2006>`_).
@@ -83,6 +87,7 @@ joint_trajectory_controller
 * Added decelerate-to-stop functionality when a trajectory is canceled or preempted. Instead of immediately holding position, the controller can now smoothly decelerate each joint to a stop using the per-joint ``max_deceleration_on_cancel`` parameter. (`#2163 <https://github.com/ros-controls/ros2_controllers/pull/2163>`_)
 * When using ``set_last_command_interface_value_as_state_on_activation``, it is no longer required to have state and command for the same interface type (e.g. velocity). With this param set, the JTC state and command will be initialized using a command interface value, if available, and will otherwise fallback to the value read from the state interface. This allows you to have position command and position+velocity state, for example, which previously would have been disallowed (with this param set).  (`#2294
   <https://github.com/ros-controls/ros2_controllers/pull/2294>`_)
+* Added ``action_execution_timeout`` parameter that aborts the goal when total execution time from trajectory start exceeds the configured limit. (`#2360 <https://github.com/ros-controls/ros2_controllers/pull/2360>`_)
 
 mecanum_drive_controller
 ************************
@@ -106,6 +111,7 @@ pid_controller
   * A new ``error_deadband`` parameter stops integration when the error is within a specified range.
 * PID state publisher can be turned off or on by using  ``activate_state_publisher`` parameter. (`#1823 <https://github.com/ros-controls/ros2_controllers/pull/1823>`_).
 * Added parameter ``set_current_state_as_first_setpoint`` (default: true) to set the current state as the first setpoint when the controller is activated, helping to avoid large initial errors and sudden jumps in control output (`#2205 <https://github.com/ros-controls/ros2_controllers/pull/2205>`_).
+* Added parameter ``reset_commands_at_deactivation`` (default: false) to reset the commands to 0.0 when the controller is deactivated. (`#2602 <https://github.com/ros-controls/ros2_controllers/pull/2602>`_).
 
 steering_controllers_library
 ********************************

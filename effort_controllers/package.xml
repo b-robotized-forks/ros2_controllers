@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>effort_controllers</name>
-  <version>4.41.0</version>
+  <version>4.43.1</version>
   <description>Generic controller for forwarding commands.</description>
 
   <maintainer email="bence.magyar.robotics@gmail.com">Bence Magyar</maintainer>
@@ -22,6 +22,7 @@
   <build_depend>ros2_control_cmake</build_depend>
 
   <depend>backward_ros</depend>
+  <depend>controller_interface</depend>
   <depend>forward_command_controller</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>

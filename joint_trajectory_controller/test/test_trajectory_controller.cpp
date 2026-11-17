@@ -3445,3 +3445,122 @@ TEST_F(TrajectoryControllerTest, concurrent_sort_to_local_joint_order)
   thread_b.join();
   EXPECT_FALSE(failed.load());
 }
+
+/**
+ * @brief A stop request on the state interface stops the active trajectory with the
+ * deceleration ramp. While the request is active, new trajectories are ignored.
+ * When the request is released, a new trajectory executes again.
+ */
+TEST_F(TrajectoryControllerTest, stop_request_state_interface_decelerates)
+{
+  rclcpp::executors::MultiThreadedExecutor executor;
+  constexpr double max_decel = 10.0;
+  // joint_vel_ is the velocity state and stays at this value (position-only commands)
+  const std::vector<double> initial_vel = {0.2, 0.2, 0.2};
+
+  std::vector<rclcpp::Parameter> params = {
+    rclcpp::Parameter("constraints.decelerate_on_cancel_state_interface.name", "stop_request/stop"),
+    rclcpp::Parameter("constraints.joint1.max_deceleration_on_cancel", max_decel),
+    rclcpp::Parameter("constraints.joint2.max_deceleration_on_cancel", max_decel),
+    rclcpp::Parameter("constraints.joint3.max_deceleration_on_cancel", max_decel),
+    rclcpp::Parameter("constraints.decelerate_on_cancel", true)};
+  SetUpAndActivateTrajectoryController(
+    executor, params, false, 0.0, 1.0, INITIAL_POS_JOINTS, initial_vel);
+
+  const builtin_interfaces::msg::Duration time_from_start{rclcpp::Duration::from_seconds(2.0)};
+  const std::vector<std::vector<double>> points{
+    {INITIAL_POS_JOINTS[0] + 1.0, INITIAL_POS_JOINTS[1] + 1.0, INITIAL_POS_JOINTS[2] + 1.0}};
+  publish(time_from_start, points, rclcpp::Time(0, 0, RCL_STEADY_TIME));
+  traj_controller_->wait_for_trajectory(executor);
+  updateController(rclcpp::Duration::from_seconds(0.2));
+  ASSERT_GT(getCommandedPositions()[0], INITIAL_POS_JOINTS[0]);
+
+  // request the stop: the ramp starts at the measured position
+  const std::vector<double> stop_position = getCommandedPositions();
+  stop_request_ = 1.0;
+  updateController(rclcpp::Duration::from_seconds(0.1));
+
+  const double stop_dist = (initial_vel[0] * initial_vel[0]) / (2.0 * max_decel);
+  std::vector<double> expected_hold = stop_position;
+  for (auto & p : expected_hold)
+  {
+    p += stop_dist;
+  }
+  expectCommandPoint(expected_hold, {0.0, 0.0, 0.0}, {0.0, 0.0, 0.0}, false);
+
+  // the request is still active: a new trajectory is ignored
+  publish(time_from_start, points, rclcpp::Time(0, 0, RCL_STEADY_TIME));
+  traj_controller_->wait_for_trajectory(executor);
+  updateController(rclcpp::Duration::from_seconds(0.2));
+  for (size_t i = 0; i < joint_names_.size(); ++i)
+  {
+    EXPECT_NEAR(expected_hold[i], getCommandedPositions()[i], COMMON_THRESHOLD);
+  }
+
+  // release the request: a new trajectory executes
+  stop_request_ = 0.0;
+  updateController(rclcpp::Duration::from_seconds(0.01));
+  const std::vector<double> release_position = getCommandedPositions();
+  publish(time_from_start, points, rclcpp::Time(0, 0, RCL_STEADY_TIME));
+  traj_controller_->wait_for_trajectory(executor);
+  updateController(rclcpp::Duration::from_seconds(0.2));
+  EXPECT_GT(getCommandedPositions()[0], release_position[0] + 0.05);
+
+  executor.cancel();
+}
+
+/**
+ * @brief With value 0, the stop request is active while the interface shows 0.
+ */
+TEST_F(TrajectoryControllerTest, stop_request_state_interface_value_zero)
+{
+  rclcpp::executors::MultiThreadedExecutor executor;
+  std::vector<rclcpp::Parameter> params = {
+    rclcpp::Parameter("constraints.decelerate_on_cancel_state_interface.name", "stop_request/stop"),
+    rclcpp::Parameter("constraints.decelerate_on_cancel_state_interface.value", 0)};
+  SetUpAndActivateTrajectoryController(executor, params);
+  ASSERT_EQ(stop_request_, 0.0);
+
+  const builtin_interfaces::msg::Duration time_from_start{rclcpp::Duration::from_seconds(2.0)};
+  const std::vector<std::vector<double>> points{
+    {INITIAL_POS_JOINTS[0] + 1.0, INITIAL_POS_JOINTS[1] + 1.0, INITIAL_POS_JOINTS[2] + 1.0}};
+
+  // the interface shows 0: the trajectory is ignored
+  updateController(rclcpp::Duration::from_seconds(0.01));
+  publish(time_from_start, points, rclcpp::Time(0, 0, RCL_STEADY_TIME));
+  traj_controller_->wait_for_trajectory(executor);
+  updateController(rclcpp::Duration::from_seconds(0.2));
+  EXPECT_NEAR(INITIAL_POS_JOINTS[0], getCommandedPositions()[0], COMMON_THRESHOLD);
+
+  // the interface shows 1: the trajectory executes
+  stop_request_ = 1.0;
+  updateController(rclcpp::Duration::from_seconds(0.01));
+  publish(time_from_start, points, rclcpp::Time(0, 0, RCL_STEADY_TIME));
+  traj_controller_->wait_for_trajectory(executor);
+  updateController(rclcpp::Duration::from_seconds(0.2));
+  EXPECT_GT(getCommandedPositions()[0], INITIAL_POS_JOINTS[0] + 0.05);
+
+  executor.cancel();
+}
+
+/**
+ * @brief If the configured stop request interface does not exist, activation succeeds
+ * and trajectories execute.
+ */
+TEST_F(TrajectoryControllerTest, stop_request_state_interface_missing)
+{
+  rclcpp::executors::MultiThreadedExecutor executor;
+  std::vector<rclcpp::Parameter> params = {rclcpp::Parameter(
+    "constraints.decelerate_on_cancel_state_interface.name", "stop_request/not_existing")};
+  SetUpAndActivateTrajectoryController(executor, params);
+
+  const builtin_interfaces::msg::Duration time_from_start{rclcpp::Duration::from_seconds(2.0)};
+  const std::vector<std::vector<double>> points{
+    {INITIAL_POS_JOINTS[0] + 1.0, INITIAL_POS_JOINTS[1] + 1.0, INITIAL_POS_JOINTS[2] + 1.0}};
+  publish(time_from_start, points, rclcpp::Time(0, 0, RCL_STEADY_TIME));
+  traj_controller_->wait_for_trajectory(executor);
+  updateController(rclcpp::Duration::from_seconds(0.2));
+  EXPECT_GT(getCommandedPositions()[0], INITIAL_POS_JOINTS[0] + 0.05);
+
+  executor.cancel();
+}

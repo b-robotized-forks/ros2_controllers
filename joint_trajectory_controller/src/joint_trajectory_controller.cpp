@@ -233,6 +233,10 @@ JointTrajectoryController::state_interface_configuration() const
   {
     conf.names.push_back(params_.speed_scaling.state_interface);
   }
+  if (!params_.constraints.decelerate_on_cancel_state_interface.name.empty())
+  {
+    conf.names.push_back(params_.constraints.decelerate_on_cancel_state_interface.name);
+  }
   return conf;
 }
 
@@ -267,6 +271,39 @@ controller_interface::return_type JointTrajectoryController::update(
     }
   }
 
+  // current state update
+  state_current_.time_from_start.sec = 0;
+  state_current_.time_from_start.nanosec = 0;
+  read_state_from_state_interfaces(state_current_);
+
+  // stop request from the hardware: abort the goal and stop like on cancel
+  if (stop_request_state_interface_.has_value())
+  {
+    const auto stop_request = stop_request_state_interface_->get().get_optional();
+    rt_stop_requested_ =
+      stop_request.has_value() &&
+      std::round(stop_request.value()) ==
+        static_cast<double>(params_.constraints.decelerate_on_cancel_state_interface.value);
+    const auto goal = *rt_active_goal_.readFromRT();
+    // A goal can be active while holding if it was accepted during a stop
+    if (rt_stop_requested_ && (!rt_is_holding_ || goal))
+    {
+      RCLCPP_WARN(logger, "Stop requested by state interface");
+      if (goal)
+      {
+        auto result = std::make_shared<FollowJTrajAction::Result>();
+        result->set__error_code(FollowJTrajAction::Result::INVALID_GOAL);
+        result->set__error_string("Aborted due to stop request from state interface");
+        goal->setAborted(result);
+        rt_active_goal_.writeFromNonRT(RealtimeGoalHandlePtr());
+      }
+      rt_has_pending_goal_ = false;
+      new_trajectory_msg_.reset();
+      new_trajectory_msg_.initRT(
+        should_decelerate_on_cancel_ ? decelerate_to_hold_position() : set_hold_position());
+    }
+  }
+
   // don't update goal after we sampled the trajectory to avoid any racecondition
   const auto active_goal = *rt_active_goal_.readFromRT();
 
@@ -282,11 +319,6 @@ controller_interface::return_type JointTrajectoryController::update(
     // TODO(denis): Add here integration of position and velocity
     current_trajectory_->update(*new_external_msg);
   }
-
-  // current state update
-  state_current_.time_from_start.sec = 0;
-  state_current_.time_from_start.nanosec = 0;
-  read_state_from_state_interfaces(state_current_);
 
   // currently carrying out a trajectory
   if (has_active_trajectory())
@@ -1201,6 +1233,30 @@ controller_interface::CallbackReturn JointTrajectoryController::on_activate(
       return CallbackReturn::ERROR;
     }
   }
+  stop_request_state_interface_.reset();
+  rt_stop_requested_ = false;
+  const auto & stop_interface_name = params_.constraints.decelerate_on_cancel_state_interface.name;
+  if (!stop_interface_name.empty())
+  {
+    auto it = std::find_if(
+      state_interfaces_.begin(), state_interfaces_.end(),
+      [&](auto & interface) { return (interface.get_name() == stop_interface_name); });
+    if (it != state_interfaces_.end())
+    {
+      stop_request_state_interface_ = *it;
+      RCLCPP_INFO(
+        logger, "Stop request state interface '%s' found. It can stop the trajectory.",
+        stop_interface_name.c_str());
+    }
+    else
+    {
+      RCLCPP_WARN(
+        logger,
+        "Stop request state interface '%s' not found. Only the action cancel can stop the "
+        "trajectory.",
+        stop_interface_name.c_str());
+    }
+  }
 
   // Clear the ordered interfaces: they may hold references to loans already released, e.g.
   // when on_deactivate returned early or a previous activation failed. Capacity is kept.
@@ -1449,6 +1505,11 @@ void JointTrajectoryController::topic_callback(
   {
     return;
   }
+  if (rt_stop_requested_)
+  {
+    RCLCPP_WARN(get_node()->get_logger(), "Ignored new trajectory. A stop request is active.");
+    return;
+  }
   // http://wiki.ros.org/joint_trajectory_controller/UnderstandingTrajectoryReplacement
   // always replace old msg with new one for now
   if (subscriber_is_active_)
@@ -1473,6 +1534,12 @@ rclcpp_action::GoalResponse JointTrajectoryController::goal_received_callback(
 
   if (!validate_trajectory_msg(goal->trajectory))
   {
+    return rclcpp_action::GoalResponse::REJECT;
+  }
+
+  if (rt_stop_requested_)
+  {
+    RCLCPP_WARN(get_node()->get_logger(), "Rejected new action goal. A stop request is active.");
     return rclcpp_action::GoalResponse::REJECT;
   }
 

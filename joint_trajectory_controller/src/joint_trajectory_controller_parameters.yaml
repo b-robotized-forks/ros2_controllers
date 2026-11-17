@@ -248,6 +248,28 @@ joint_trajectory_controller:
         Requires velocity state interface from all joints in the controller.",
       read_only: true,
     }
+    decelerate_on_cancel_state_interface:
+      name: {
+        type: string,
+        default_value: "",
+        description: "Fully qualified name of a state interface that requests a stop.
+          When the interface shows the stop value, the controller aborts the active goal and stops
+          with the same behavior as a cancel. While the stop request is active, the controller
+          rejects new action goals and ignores new topic trajectories.
+          If empty, this feature is disabled. If the interface is not found on activation,
+          the controller logs a warning and only the action cancel can stop the trajectory.",
+        read_only: true,
+      }
+      value: {
+        type: int,
+        default_value: 1,
+        description: "Value of the state interface that requests a stop.
+          The interface value is rounded to the nearest integer before the comparison.",
+        read_only: true,
+        validation: {
+          one_of<>: [[0, 1]]
+        }
+      }
     __map_joints:
       trajectory: {
         type: double,

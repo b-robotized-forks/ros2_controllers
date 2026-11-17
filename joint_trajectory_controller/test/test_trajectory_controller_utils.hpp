@@ -456,6 +456,12 @@ public:
     gpio_command_interfaces_.emplace_back(gpio_cmd_if);
     loaned_command_ifs.emplace_back(gpio_command_interfaces_.back(), nullptr);
 
+    stop_request_ = 0.0;
+    stop_request_state_interface_ =
+      std::make_shared<hardware_interface::StateInterface>("stop_request", "stop");
+    std::ignore = stop_request_state_interface_->set_value(stop_request_);
+    loaned_state_ifs.emplace_back(stop_request_state_interface_, nullptr);
+
     traj_controller_->assign_interfaces(std::move(loaned_command_ifs), std::move(loaned_state_ifs));
   }
 
@@ -627,6 +633,30 @@ public:
     }
   }
 
+  /**
+   * @brief Returns the commanded positions.
+   */
+  std::vector<double> getCommandedPositions() const
+  {
+    std::vector<double> positions;
+    for (const auto & cmd_if : pos_cmd_interfaces_)
+    {
+      positions.push_back(cmd_if->get_optional().value());
+    }
+    return positions;
+  }
+
+  /**
+   * @brief Writes stop_request_ to the stop request state interface.
+   */
+  void syncStopRequestState()
+  {
+    if (stop_request_state_interface_)
+    {
+      std::ignore = stop_request_state_interface_->set_value(stop_request_);
+    }
+  }
+
   void updateController(
     rclcpp::Duration wait_time = rclcpp::Duration::from_seconds(0.2),
     const rclcpp::Duration update_rate = rclcpp::Duration::from_seconds(0.01))
@@ -639,6 +669,7 @@ public:
     while (clock.now() <= end_time)
     {
       auto now = clock.now();
+      syncStopRequestState();
       traj_controller_->update(now, now - previous_time);
       mirrorCommandToStateIfNotSeparate();
       previous_time = now;
@@ -669,6 +700,7 @@ public:
     auto time_counter = start_time;
     while (time_counter <= end_time)
     {
+      syncStopRequestState();
       traj_controller_->update(time_counter, update_rate);
       mirrorCommandToStateIfNotSeparate();
       time_counter += update_rate;
@@ -904,6 +936,8 @@ public:
   std::vector<hardware_interface::StateInterface::SharedPtr> acc_state_interfaces_;
   std::vector<hardware_interface::StateInterface::SharedPtr> gpio_state_interfaces;
   bool separate_cmd_and_state_values_ = false;
+  double stop_request_ = 0.0;
+  hardware_interface::StateInterface::SharedPtr stop_request_state_interface_;
 };
 
 // From the tutorial: https://www.sandordargo.com/blog/2019/04/24/parameterized-testing-with-gtest

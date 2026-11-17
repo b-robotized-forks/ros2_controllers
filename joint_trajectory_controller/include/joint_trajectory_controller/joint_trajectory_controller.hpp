@@ -129,6 +129,8 @@ protected:
     scaling_state_interface_;
   std::optional<std::reference_wrapper<hardware_interface::LoanedCommandInterface>>
     scaling_command_interface_;
+  std::optional<std::reference_wrapper<hardware_interface::LoanedStateInterface>>
+    stop_request_state_interface_;
 
   bool has_position_state_interface_ = false;
   bool has_velocity_state_interface_ = false;
@@ -171,6 +173,8 @@ protected:
   double cmd_timeout_;
   // True if holding position or repeating last trajectory point in case of success
   std::atomic<bool> rt_is_holding_{false};
+  // written by update(), read by the action and topic callbacks
+  std::atomic<bool> rt_stop_requested_{false};
   // TODO(karsten1987): eventually activate and deactivate subscriber directly when its supported
   std::atomic<bool> subscriber_is_active_{false};
   rclcpp::Subscription<trajectory_msgs::msg::JointTrajectory>::SharedPtr joint_command_subscriber_ =

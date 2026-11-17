@@ -428,10 +428,17 @@ public:
 
     speed_scaling_factor_ = 1.0;
     target_speed_scaling_factor_ = 1.0;
+    // Loaned interfaces keep references, so the vector must not reallocate
+    gpio_state_interfaces.reserve(gpio_state_interfaces.size() + 2);
     gpio_state_interfaces.emplace_back(
       hardware_interface::StateInterface(
         "speed_scaling", "speed_scaling_factor",
         separate_cmd_and_state_values ? &speed_scaling_factor_ : &target_speed_scaling_factor_));
+    state_interfaces.emplace_back(gpio_state_interfaces.back());
+
+    stop_request_ = 0.0;
+    gpio_state_interfaces.emplace_back(
+      hardware_interface::StateInterface("stop_request", "stop", &stop_request_));
     state_interfaces.emplace_back(gpio_state_interfaces.back());
 
     gpio_command_interfaces_.emplace_back(
@@ -836,6 +843,7 @@ public:
   std::vector<double> joint_state_acc_;
   double speed_scaling_factor_;
   double target_speed_scaling_factor_;
+  double stop_request_ = 0.0;
   std::vector<hardware_interface::CommandInterface> pos_cmd_interfaces_;
   std::vector<hardware_interface::CommandInterface> vel_cmd_interfaces_;
   std::vector<hardware_interface::CommandInterface> acc_cmd_interfaces_;

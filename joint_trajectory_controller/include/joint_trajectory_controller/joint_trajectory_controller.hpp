@@ -99,6 +99,8 @@ protected:
   size_t dof_;
   size_t num_cmd_joints_;
   std::vector<size_t> map_cmd_to_joints_;
+  // Buffer for sort_to_local_joint_order(), used only in update()
+  std::vector<double> remap_buffer_;
 
   // Storing command joint names for interfaces
   std::vector<std::string> command_joint_names_;
@@ -219,7 +221,7 @@ protected:
     std::shared_ptr<trajectory_msgs::msg::JointTrajectory> trajectory_msg) const;
   // sorts the joints of the incoming message to our local order
   void sort_to_local_joint_order(
-    std::shared_ptr<trajectory_msgs::msg::JointTrajectory> trajectory_msg) const;
+    std::shared_ptr<trajectory_msgs::msg::JointTrajectory> trajectory_msg);
   bool validate_trajectory_msg(const trajectory_msgs::msg::JointTrajectory & trajectory) const;
   void add_new_trajectory_msg(
     const std::shared_ptr<trajectory_msgs::msg::JointTrajectory> & traj_msg);

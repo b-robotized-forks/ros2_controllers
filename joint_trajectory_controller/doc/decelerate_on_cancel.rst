@@ -81,3 +81,50 @@ Enable the feature by setting ``constraints.decelerate_on_cancel`` to ``true`` a
 .. note::
 
    Choose ``max_deceleration_on_cancel`` values that are within the physical limits of your hardware. Values that are too high may still cause faults, while values that are too low will result in longer stopping distances.
+
+Stop request from a state interface
+-----------------------------------
+
+A state interface from the hardware can also stop the trajectory, for example a stop button or a safety signal.
+The action cancel and the state interface work independently. Each of them stops the trajectory.
+
+When the state interface shows the stop value, the controller:
+
+1. Aborts the active action goal. The client receives ``ABORTED`` with the error code ``INVALID_GOAL`` and the error string ``Aborted due to stop request from state interface``.
+2. Stops the trajectory with the same behavior as a cancel. If ``decelerate_on_cancel`` is enabled and valid, the joints decelerate to a stop. If not, the controller holds the current position.
+3. Rejects new action goals and ignores new trajectories on the ``~/joint_trajectory`` topic, with a warning, while the stop value stays on the interface.
+
+When the interface no longer shows the stop value, the controller accepts new goals and trajectories again.
+The stop request does not latch.
+
+The controller reads the interface value in each update cycle and rounds it to the nearest integer.
+It then compares the result with the configured ``value``.
+
+Configure the feature under ``constraints.decelerate_on_cancel_state_interface``:
+
+.. code-block:: yaml
+
+   controller_name:
+     ros__parameters:
+       constraints:
+         decelerate_on_cancel: true
+         decelerate_on_cancel_state_interface:
+           name: "safety/stop_request"
+           value: 1
+         joint_1:
+           max_deceleration_on_cancel: 10.0
+
+* ``name``: The fully qualified name of the state interface. The default is empty, which disables the feature.
+* ``value``: The interface value that requests the stop. The permitted values are ``0`` and ``1``. The default is ``1``. Use ``0`` for a signal that is active low.
+
+On activation, the controller logs if it found the interface.
+If the controller does not find the interface, it logs a warning, and only the action cancel can stop the trajectory.
+
+.. note::
+
+   The controller claims the interface. The controller manager does not activate a controller if a claimed state interface is not available.
+   Thus, set ``name`` only if the hardware exports this interface.
+
+.. note::
+
+   Both ``name`` and ``value`` are read-only parameters. They can only be set at controller configuration time.

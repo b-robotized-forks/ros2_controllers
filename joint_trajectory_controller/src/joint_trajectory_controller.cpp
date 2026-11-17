@@ -14,6 +14,7 @@
 
 #include "joint_trajectory_controller/joint_trajectory_controller.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -775,6 +776,7 @@ controller_interface::CallbackReturn JointTrajectoryController::on_configure(
 
   // get degrees of freedom
   dof_ = params_.joints.size();
+  remap_buffer_.reserve(dof_);
 
   // TODO(destogl): why is this here? Add comment or move
   if (!reset())
@@ -1546,51 +1548,38 @@ void JointTrajectoryController::fill_partial_goal(
 }
 
 void JointTrajectoryController::sort_to_local_joint_order(
-  std::shared_ptr<trajectory_msgs::msg::JointTrajectory> trajectory_msg) const
+  std::shared_ptr<trajectory_msgs::msg::JointTrajectory> trajectory_msg)
 {
   // rearrange all points in the trajectory message based on mapping
   std::vector<size_t> mapping_vector = mapping(trajectory_msg->joint_names, params_.joints);
-  auto remap = [this](
-                 const std::vector<double> & to_remap,
-                 const std::vector<size_t> & mapping) -> std::vector<double>
+  auto remap = [this, &mapping_vector](std::vector<double> & to_remap)
   {
     if (to_remap.empty())
     {
-      return to_remap;
+      return;
     }
-    if (to_remap.size() != mapping.size())
+    if (to_remap.size() != mapping_vector.size())
     {
       RCLCPP_WARN(
         get_node()->get_logger(), "Invalid input size (%zu) for sorting", to_remap.size());
-      return to_remap;
+      return;
     }
-    static std::vector<double> output(dof_, 0.0);
-    // Only resize if necessary since it's an expensive operation
-    if (output.size() != mapping.size())
+    // Buffer of this instance, reserved in on_configure(). Do not make it static: a static
+    // buffer is shared by all controller instances, and async controllers use it in parallel.
+    remap_buffer_.resize(mapping_vector.size());
+    for (size_t index = 0; index < mapping_vector.size(); ++index)
     {
-      output.resize(mapping.size(), 0.0);
+      remap_buffer_[mapping_vector[index]] = to_remap[index];
     }
-    for (size_t index = 0; index < mapping.size(); ++index)
-    {
-      auto map_index = mapping[index];
-      output[map_index] = to_remap[index];
-    }
-    return output;
+    std::copy(remap_buffer_.begin(), remap_buffer_.end(), to_remap.begin());
   };
 
-  for (size_t index = 0; index < trajectory_msg->points.size(); ++index)
+  for (auto & point : trajectory_msg->points)
   {
-    trajectory_msg->points[index].positions =
-      remap(trajectory_msg->points[index].positions, mapping_vector);
-
-    trajectory_msg->points[index].velocities =
-      remap(trajectory_msg->points[index].velocities, mapping_vector);
-
-    trajectory_msg->points[index].accelerations =
-      remap(trajectory_msg->points[index].accelerations, mapping_vector);
-
-    trajectory_msg->points[index].effort =
-      remap(trajectory_msg->points[index].effort, mapping_vector);
+    remap(point.positions);
+    remap(point.velocities);
+    remap(point.accelerations);
+    remap(point.effort);
   }
 }
 

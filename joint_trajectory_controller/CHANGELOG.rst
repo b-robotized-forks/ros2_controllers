@@ -2,6 +2,30 @@
 Changelog for package joint_trajectory_controller
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+4.43.1 (2026-11-04)
+-------------------
+* Fix memory access crashes in joint trajectory controller (backport `#2705 <https://github.com/ros-controls/ros2_controllers/issues/2705>`_) (`#2734 <https://github.com/ros-controls/ros2_controllers/issues/2734>`_)
+* [JTC] Clear ordered interfaces before re-ordering them in on_activate (backport `#2692 <https://github.com/ros-controls/ros2_controllers/issues/2692>`_) (`#2708 <https://github.com/ros-controls/ros2_controllers/issues/2708>`_)
+* Contributors: mergify[bot]
+
+4.43.0 (2026-10-05)
+-------------------
+* fix(jtc): Use trySetFeedback for goal handle feedback (backport `#2610 <https://github.com/ros-controls/ros2_controllers/issues/2610>`_) (`#2625 <https://github.com/ros-controls/ros2_controllers/issues/2625>`_)
+* [JTC] Add goal_timeout parameter to abort action when total trajectory time exceeds limit (backport `#2360 <https://github.com/ros-controls/ros2_controllers/issues/2360>`_) (`#2583 <https://github.com/ros-controls/ros2_controllers/issues/2583>`_)
+* Contributors: mergify[bot]
+
+4.42.1 (2026-08-12)
+-------------------
+
+4.42.0 (2026-08-10)
+-------------------
+* Use preallocated feedback from JTC to avoid heap allocation (backport `#2160 <https://github.com/ros-controls/ros2_controllers/issues/2160>`_) (`#2541 <https://github.com/ros-controls/ros2_controllers/issues/2541>`_)
+* Use new Command/State Interfaces API for tests (backport `#2476 <https://github.com/ros-controls/ros2_controllers/issues/2476>`_) (`#2532 <https://github.com/ros-controls/ros2_controllers/issues/2532>`_)
+* fix: prevent JTC segfault when continuous joint has no URDF limits (backport `#2523 <https://github.com/ros-controls/ros2_controllers/issues/2523>`_) (`#2529 <https://github.com/ros-controls/ros2_controllers/issues/2529>`_)
+* fix(joint-trajectory-controller): use active tolerances in update step (backport `#2101 <https://github.com/ros-controls/ros2_controllers/issues/2101>`_) (`#2511 <https://github.com/ros-controls/ros2_controllers/issues/2511>`_)
+* Refactor JTC command assignment for Kilted (backport `#2504 <https://github.com/ros-controls/ros2_controllers/issues/2504>`_) (`#2505 <https://github.com/ros-controls/ros2_controllers/issues/2505>`_)
+* Contributors: mergify[bot]
+
 4.41.0 (2026-07-01)
 -------------------
 * Deliver abort action result before destroying goal handle on preemption (backport `#2422 <https://github.com/ros-controls/ros2_controllers/issues/2422>`_) (`#2423 <https://github.com/ros-controls/ros2_controllers/issues/2423>`_)

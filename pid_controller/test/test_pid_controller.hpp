@@ -24,6 +24,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -55,6 +56,8 @@ class TestablePidController : public pid_controller::PidController
   FRIEND_TEST(PidControllerTest, test_feedforward_mode_parameter);
   FRIEND_TEST(PidControllerTest, test_update_logic_feedforward_off);
   FRIEND_TEST(PidControllerTest, test_update_logic_feedforward_on_with_zero_feedforward_gain);
+  FRIEND_TEST(PidControllerTest, reset_commands_at_deactivation);
+  FRIEND_TEST(PidControllerTest, do_not_reset_commands_at_deactivation);
   FRIEND_TEST(PidControllerTest, test_update_logic_chainable_not_use_subscriber_update);
   FRIEND_TEST(PidControllerTest, test_update_logic_angle_wraparound_off);
   FRIEND_TEST(PidControllerTest, test_update_logic_angle_wraparound_on);
@@ -78,8 +81,8 @@ public:
   controller_interface::CallbackReturn on_activate(
     const rclcpp_lifecycle::State & previous_state) override
   {
-    auto ref_itfs = on_export_reference_interfaces();
-    auto state_itfs = on_export_state_interfaces();
+    export_reference_interfaces();
+    export_state_interfaces();
     return pid_controller::PidController::on_activate(previous_state);
   }
 
@@ -173,10 +176,11 @@ protected:
 
     for (size_t i = 0; i < dof_names_.size(); ++i)
     {
-      command_itfs_.emplace_back(
-        hardware_interface::CommandInterface(
-          dof_names_[i], command_interface_, &dof_command_values_[i]));
-      command_ifs.emplace_back(command_itfs_.back());
+      auto command_itf =
+        std::make_shared<hardware_interface::CommandInterface>(dof_names_[i], command_interface_);
+      std::ignore = command_itf->set_value(dof_command_values_[i]);
+      command_itfs_.emplace_back(command_itf);
+      command_ifs.emplace_back(command_itfs_.back(), nullptr);
     }
 
     std::vector<hardware_interface::LoanedStateInterface> state_ifs;
@@ -187,9 +191,10 @@ protected:
     {
       for (const auto & dof_name : dof_names_)
       {
-        state_itfs_.emplace_back(
-          hardware_interface::StateInterface(dof_name, interface, &dof_state_values_[index]));
-        state_ifs.emplace_back(state_itfs_.back());
+        auto state_itf = std::make_shared<hardware_interface::StateInterface>(dof_name, interface);
+        std::ignore = state_itf->set_value(dof_state_values_[index]);
+        state_itfs_.emplace_back(state_itf);
+        state_ifs.emplace_back(state_itfs_.back(), nullptr);
         ++index;
       }
     }
@@ -298,8 +303,8 @@ protected:
   std::vector<double> dof_command_values_;
   std::vector<std::string> reference_and_state_dof_names_;
 
-  std::vector<hardware_interface::StateInterface> state_itfs_;
-  std::vector<hardware_interface::CommandInterface> command_itfs_;
+  std::vector<hardware_interface::StateInterface::SharedPtr> state_itfs_;
+  std::vector<hardware_interface::CommandInterface::SharedPtr> command_itfs_;
 
   // Test related parameters
   std::unique_ptr<TestablePidController> controller_;

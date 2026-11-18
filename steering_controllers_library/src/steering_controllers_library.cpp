@@ -14,13 +14,16 @@
 
 #include "steering_controllers_library/steering_controllers_library.hpp"
 
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
+#include "lifecycle_msgs/msg/state.hpp"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 namespace
@@ -484,23 +487,21 @@ SteeringControllersLibrary::state_interface_configuration() const
   return state_interfaces_config;
 }
 
-std::vector<hardware_interface::CommandInterface>
-SteeringControllersLibrary::on_export_reference_interfaces()
+std::vector<hardware_interface::CommandInterface::SharedPtr>
+SteeringControllersLibrary::on_export_reference_interfaces_list()
 {
-  reference_interfaces_.resize(nr_ref_itfs_, std::numeric_limits<double>::quiet_NaN());
-
-  std::vector<hardware_interface::CommandInterface> reference_interfaces;
+  std::vector<hardware_interface::CommandInterface::SharedPtr> reference_interfaces;
   reference_interfaces.reserve(nr_ref_itfs_);
 
-  reference_interfaces.push_back(
-    hardware_interface::CommandInterface(
-      get_node()->get_name() + std::string("/linear"), hardware_interface::HW_IF_VELOCITY,
-      &reference_interfaces_[0]));
+  auto linear_interface = std::make_shared<hardware_interface::CommandInterface>(
+    get_node()->get_name() + std::string("/linear"), hardware_interface::HW_IF_VELOCITY);
+  std::ignore = linear_interface->set_value(std::numeric_limits<double>::quiet_NaN());
+  reference_interfaces.push_back(linear_interface);
 
-  reference_interfaces.push_back(
-    hardware_interface::CommandInterface(
-      get_node()->get_name() + std::string("/angular"), hardware_interface::HW_IF_VELOCITY,
-      &reference_interfaces_[1]));
+  auto angular_interface = std::make_shared<hardware_interface::CommandInterface>(
+    get_node()->get_name() + std::string("/angular"), hardware_interface::HW_IF_VELOCITY);
+  std::ignore = angular_interface->set_value(std::numeric_limits<double>::quiet_NaN());
+  reference_interfaces.push_back(angular_interface);
 
   return reference_interfaces;
 }
@@ -549,10 +550,12 @@ controller_interface::return_type SteeringControllersLibrary::update_reference_f
   // accept message only if there is no timeout
   if (age_of_last_command <= ref_timeout_ || ref_timeout_ == rclcpp::Duration::from_seconds(0))
   {
-    if (!std::isnan(current_ref_.twist.linear.x) && !std::isnan(current_ref_.twist.linear.y))
+    if (std::isfinite(current_ref_.twist.linear.x) && std::isfinite(current_ref_.twist.angular.z))
     {
-      reference_interfaces_[0] = current_ref_.twist.linear.x;
-      reference_interfaces_[1] = current_ref_.twist.angular.z;
+      std::ignore =
+        ordered_exported_reference_interfaces_[0]->set_value(current_ref_.twist.linear.x);
+      std::ignore =
+        ordered_exported_reference_interfaces_[1]->set_value(current_ref_.twist.angular.z);
 
       if (ref_timeout_ == rclcpp::Duration::from_seconds(0))
       {
@@ -567,8 +570,10 @@ controller_interface::return_type SteeringControllersLibrary::update_reference_f
   {
     if (!std::isnan(current_ref_.twist.linear.x) && !std::isnan(current_ref_.twist.angular.z))
     {
-      reference_interfaces_[0] = std::numeric_limits<double>::quiet_NaN();
-      reference_interfaces_[1] = std::numeric_limits<double>::quiet_NaN();
+      std::ignore = ordered_exported_reference_interfaces_[0]->set_value(
+        std::numeric_limits<double>::quiet_NaN());
+      std::ignore = ordered_exported_reference_interfaces_[1]->set_value(
+        std::numeric_limits<double>::quiet_NaN());
 
       current_ref_.twist.linear.x = std::numeric_limits<double>::quiet_NaN();
       current_ref_.twist.angular.z = std::numeric_limits<double>::quiet_NaN();
@@ -586,8 +591,28 @@ controller_interface::return_type SteeringControllersLibrary::update_and_write_c
   auto logger = get_node()->get_logger();
 
   // store current ref (for open loop odometry) and update odometry
-  last_linear_velocity_ = reference_interfaces_[0];
-  last_angular_velocity_ = reference_interfaces_[1];
+  const auto ref_0 = ordered_exported_reference_interfaces_[0]->get_optional<double>();
+  const auto ref_1 = ordered_exported_reference_interfaces_[1]->get_optional<double>();
+  const double ref_linear = ref_0.value_or(std::numeric_limits<double>::quiet_NaN());
+  const double ref_angular = ref_1.value_or(std::numeric_limits<double>::quiet_NaN());
+
+  // store current ref (for open loop odometry) and update odometry
+  if (std::isfinite(ref_linear))
+  {
+    last_linear_velocity_ = ref_linear;
+  }
+  else
+  {
+    last_linear_velocity_ = 0.0;
+  }
+  if (std::isfinite(ref_angular))
+  {
+    last_angular_velocity_ = ref_angular;
+  }
+  else
+  {
+    last_angular_velocity_ = 0.0;
+  }
   update_odometry(period);
 
   // MOVE ROBOT
@@ -595,10 +620,10 @@ controller_interface::return_type SteeringControllersLibrary::update_and_write_c
   // Limit velocities and accelerations:
   // TODO(destogl): add limiter for the velocities
 
-  if (!std::isnan(reference_interfaces_[0]) && !std::isnan(reference_interfaces_[1]))
+  if (!std::isnan(ref_linear) && !std::isnan(ref_angular))
   {
     auto [traction_commands, steering_commands] = odometry_.get_commands(
-      reference_interfaces_[0], reference_interfaces_[1], params_.open_loop,
+      ref_linear, ref_angular, params_.open_loop,
       params_.reduce_wheel_speed_until_steering_reached);
 
     for (size_t i = 0; i < params_.traction_joints_names.size(); i++)
@@ -736,12 +761,13 @@ controller_interface::return_type SteeringControllersLibrary::update_and_write_c
         controller_state_msg_.steering_angle_command.push_back(command_interface_value_op.value());
       }
     }
-
     controller_state_publisher_->try_publish(controller_state_msg_);
   }
 
-  reference_interfaces_[0] = std::numeric_limits<double>::quiet_NaN();
-  reference_interfaces_[1] = std::numeric_limits<double>::quiet_NaN();
+  std::ignore =
+    ordered_exported_reference_interfaces_[0]->set_value(std::numeric_limits<double>::quiet_NaN());
+  std::ignore =
+    ordered_exported_reference_interfaces_[1]->set_value(std::numeric_limits<double>::quiet_NaN());
 
   return controller_interface::return_type::OK;
 }

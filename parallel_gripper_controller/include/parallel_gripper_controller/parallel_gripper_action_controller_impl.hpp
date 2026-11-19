@@ -397,12 +397,17 @@ controller_interface::CallbackReturn GripperActionController::on_activate(
   pre_alloc_result_->stalled = false;
 
   // Action interface
+  // Keep only the newest goal request. A new goal preempts the active goal, so older
+  // queued goal requests are not useful.
+  rcl_action_server_options_t action_server_options = rcl_action_server_get_default_options();
+  action_server_options.goal_service_qos.depth = 1;
   action_server_ = rclcpp_action::create_server<control_msgs::action::ParallelGripperCommand>(
     get_node(), "~/gripper_cmd",
     std::bind(
       &GripperActionController::goal_callback, this, std::placeholders::_1, std::placeholders::_2),
     std::bind(&GripperActionController::cancel_callback, this, std::placeholders::_1),
-    std::bind(&GripperActionController::accepted_callback, this, std::placeholders::_1));
+    std::bind(&GripperActionController::accepted_callback, this, std::placeholders::_1),
+    action_server_options);
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
